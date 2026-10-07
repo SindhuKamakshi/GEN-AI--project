@@ -1,88 +1,82 @@
-from pathlib import Path
+import re
+from typing import Optional
 
 from rag.embedding_service import EmbeddingService
-from rag.vector_store import VectorStore
 from rag.keyword_store import KeywordStore
+from rag.reranker import Reranker
+from rag.vector_store import VectorStore
 
 
 class SearchService:
     """
     Hybrid repository search service for CodeLens AI.
 
-    Retrieval:
-    - ChromaDB -> semantic search
-    - SQLite FTS5 -> keyword/BM25 search
-    - RRF -> rank-based result fusion
+    Search pipeline:
 
-    Ranking:
-    - Query intent detection
-    - Repository-aware filtering
-    - File-level relevance signals
-    - Implementation-aware signals
+        Semantic Search
+              +
+        Keyword/BM25 Search
+              ↓
+             RRF
+              ↓
+       Intent-aware ranking
+              ↓
+        Cross-Encoder
+          Reranking
+              ↓
+      Code-Aware Ranking
+              ↓
+          Final Top-K
     """
 
-    # ---------------------------------------------------------
-    # Retrieval configuration
-    # ---------------------------------------------------------
-
-    CANDIDATE_MULTIPLIER = 4
-
-    # Number of candidates retrieved from each search system
-    # before fusion.
     HYBRID_CANDIDATE_MULTIPLIER = 8
-
-    # Standard RRF constant.
     RRF_K = 60
 
-    # ---------------------------------------------------------
-    # High-value repository files
-    # ---------------------------------------------------------
+    # ==========================================================
+    # Code-aware ranking weights
+    # ==========================================================
+
+    DEFINITION_BONUS = 2.0
+    EXACT_ENTITY_NAME_BONUS = 1.5
+    FUNCTION_DEFINITION_BONUS = 1.0
+    CLASS_DEFINITION_BONUS = 1.0
+    USAGE_BONUS = 0.5
+
+    # Usage-specific weights.
+    USAGE_CALL_BONUS = 1.25
+    USAGE_REFERENCE_BONUS = 0.75
+    USAGE_DEFINITION_PENALTY = -1.5
+
+    # Explanation-specific weights.
+    EXPLANATION_DEFINITION_BONUS = 3.0
+    EXPLANATION_RELATED_CODE_BONUS = 0.75
 
     HIGH_VALUE_FILES = {
         "readme.md",
         "readme.txt",
-        "readme",
+        "readme.rst",
         "pyproject.toml",
-        "package.json",
         "requirements.txt",
+        "package.json",
         "pom.xml",
         "build.gradle",
+        "build.gradle.kts",
         "dockerfile",
-        "docker-compose.yml",
-        "docker-compose.yaml",
     }
-
-    # ---------------------------------------------------------
-    # Low-value repository files
-    # ---------------------------------------------------------
 
     LOW_VALUE_FILES = {
         "license",
         "license.txt",
         "license.md",
-        "copying",
-        "copying.txt",
-        "gitattributes",
-        "gitattributes.txt",
-        ".gitattributes",
-        "gitignore",
-        "gitignore.txt",
         ".gitignore",
+        ".gitattributes",
     }
 
-    # ---------------------------------------------------------
-    # Documentation files
-    # ---------------------------------------------------------
-
-    DOCUMENTATION_EXTENSIONS = {
+    DOCUMENT_EXTENSIONS = {
         ".md",
         ".rst",
         ".txt",
     }
-
-    # ---------------------------------------------------------
-    # Source-code files
-    # ---------------------------------------------------------
 
     SOURCE_EXTENSIONS = {
         ".py",
@@ -101,38 +95,17 @@ class SearchService:
         ".cs",
     }
 
-    # ---------------------------------------------------------
-    # Configuration / dependency files
-    # ---------------------------------------------------------
-
-    CONFIGURATION_FILES = {
-        "requirements.txt",
-        "pyproject.toml",
-        "package.json",
-        "package-lock.json",
-        "yarn.lock",
-        "pom.xml",
-        "build.gradle",
-        "dockerfile",
-        "docker-compose.yml",
-        "docker-compose.yaml",
+    CONFIG_EXTENSIONS = {
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".env",
     }
 
-    # ---------------------------------------------------------
-    # Files commonly used as tests
-    # ---------------------------------------------------------
-
-    TEST_FILE_INDICATORS = {
-        "test_",
-        "_test",
-        "tests",
-    }
-
-    # ---------------------------------------------------------
-    # File-name indicators for implementation modules
-    # ---------------------------------------------------------
-
-    IMPLEMENTATION_FILE_INDICATORS = {
+    IMPLEMENTATION_KEYWORDS = {
         "service",
         "services",
         "manager",
@@ -162,450 +135,975 @@ class SearchService:
         embedding_service: EmbeddingService,
         vector_store: VectorStore,
         keyword_store: KeywordStore,
+        reranker: Optional[Reranker] = None,
     ):
         self.embedding_service = embedding_service
         self.vector_store = vector_store
         self.keyword_store = keyword_store
 
-    # =========================================================
-    # QUERY INTENT
-    # =========================================================
+        # Reranker is optional so the existing RRF search can
+        # continue working if the reranker is unavailable.
+        self.reranker = reranker
+
+    # ==========================================================
+    # Query Intent
+    # ==========================================================
 
     def detect_query_intent(self, query: str) -> str:
-        """
-        Detect the broad intent of a repository question.
-        """
+        query_lower = query.lower()
 
-        normalized_query = query.lower().strip()
-
-        overview_keywords = [
-            "what is this repository",
-            "what is this project",
-            "what does this repository do",
-            "what does this project do",
-            "repository about",
-            "project about",
+        overview_terms = {
             "overview",
-            "purpose of this repository",
-            "purpose of this project",
-            "explain this repository",
-            "explain this project",
-        ]
+            "summarize",
+            "summary",
+            "what does this project do",
+            "what is this project",
+            "purpose",
+            "main functionality",
+        }
 
-        architecture_keywords = [
+        architecture_terms = {
             "architecture",
+            "architectural",
             "structure",
-            "modules",
+            "system design",
+            "how is the system organized",
             "components",
-            "how is the project organized",
-            "how is the repository organized",
-        ]
+        }
 
-        technology_keywords = [
+        technology_terms = {
             "technology",
             "technologies",
             "tech stack",
-            "framework",
             "libraries",
+            "library",
+            "framework",
             "dependencies",
-            "tools used",
-            "what technologies",
-        ]
+            "tools",
+            "what is used",
+        }
 
-        implementation_keywords = [
-            "how does",
-            "how is",
-            "how are",
-            "implementation",
+        implementation_terms = {
             "implemented",
+            "implementation",
             "where is",
-            "where are",
             "defined",
-            "definition",
             "function",
             "class",
             "method",
-            "pipeline",
-            "workflow",
+            "code",
             "logic",
-            "code",
-        ]
+        }
 
-        code_keywords = [
-            "function",
-            "class",
-            "method",
-            "code",
-            "implementation",
-            "where is",
-            "defined",
-            "implemented",
-            "how does",
-        ]
+        # ------------------------------------------------------
+        # High-level project questions first
+        # ------------------------------------------------------
 
         if any(
-            keyword in normalized_query
-            for keyword in overview_keywords
+            term in query_lower
+            for term in overview_terms
         ):
             return "overview"
 
         if any(
-            keyword in normalized_query
-            for keyword in architecture_keywords
+            term in query_lower
+            for term in architecture_terms
         ):
             return "architecture"
 
         if any(
-            keyword in normalized_query
-            for keyword in technology_keywords
+            term in query_lower
+            for term in technology_terms
         ):
             return "technology"
 
+        # ------------------------------------------------------
+        # Code relationship intent
+        # ------------------------------------------------------
+
+        code_intent = self.detect_code_intent(query)
+
+        if code_intent in {
+            "definition",
+            "usage",
+            "explanation",
+        }:
+            return "implementation"
+
+        # ------------------------------------------------------
+        # General implementation wording
+        # ------------------------------------------------------
+
         if any(
-            keyword in normalized_query
-            for keyword in implementation_keywords
+            term in query_lower
+            for term in implementation_terms
         ):
             return "implementation"
 
-        if any(
-            keyword in normalized_query
-            for keyword in code_keywords
-        ):
-            return "code"
-
         return "general"
 
-    # =========================================================
-    # METADATA HELPERS
-    # =========================================================
+    # ==========================================================
+    # File Information
+    # ==========================================================
 
     def get_file_name(self, metadata: dict) -> str:
-        """
-        Extract the file name from chunk metadata.
-        """
+        file_name = metadata.get("file_name")
+
+        if file_name:
+            return str(file_name).lower()
 
         file_path = metadata.get("file_path", "")
 
         if not file_path:
             return ""
 
-        return Path(file_path).name.lower()
+        return (
+            str(file_path)
+            .replace("\\", "/")
+            .split("/")[-1]
+            .lower()
+        )
 
     def get_file_extension(self, metadata: dict) -> str:
-        """
-        Extract the file extension.
-        """
+        file_path = str(
+            metadata.get("file_path", "")
+        ).lower()
 
-        file_name = self.get_file_name(metadata)
-
-        if not file_name:
+        if "." not in file_path:
             return ""
 
-        return Path(file_name).suffix.lower()
+        return "." + file_path.rsplit(".", 1)[-1]
 
     def get_file_stem(self, metadata: dict) -> str:
-        """
-        Extract the file stem without extension.
-        """
-
         file_name = self.get_file_name(metadata)
 
-        if not file_name:
-            return ""
+        if "." in file_name:
+            return file_name.rsplit(".", 1)[0]
 
-        return Path(file_name).stem.lower()
+        return file_name
 
-    def is_low_value_file(self, metadata: dict) -> bool:
-        """
-        Determine whether the file is low-value for search.
-        """
+    # ==========================================================
+    # Intent Filtering
+    # ==========================================================
 
-        file_name = self.get_file_name(metadata)
-
-        return file_name in self.LOW_VALUE_FILES
-
-    def is_test_file(self, metadata: dict) -> bool:
-        """
-        Determine whether a file looks like a test file.
-        """
-
-        file_name = self.get_file_name(metadata)
-        file_stem = self.get_file_stem(metadata)
-
-        if file_name.startswith("test_"):
-            return True
-
-        if file_stem.endswith("_test"):
-            return True
-
-        if file_stem.startswith("test"):
-            return True
-
-        file_path = metadata.get(
-            "file_path",
-            "",
-        ).lower()
-
-        path_parts = Path(file_path).parts
-
-        if "tests" in path_parts or "test" in path_parts:
-            return True
-
-        return False
-
-    def is_documentation_file(self, metadata: dict) -> bool:
-        """
-        Determine whether the file is documentation.
-        """
-
-        extension = self.get_file_extension(metadata)
-
-        return extension in self.DOCUMENTATION_EXTENSIONS
-
-    def is_source_file(self, metadata: dict) -> bool:
-        """
-        Determine whether the file contains source code.
-        """
-
-        extension = self.get_file_extension(metadata)
-
-        return extension in self.SOURCE_EXTENSIONS
-
-    def is_configuration_file(self, metadata: dict) -> bool:
-        """
-        Determine whether the file is a configuration/dependency file.
-        """
-
-        file_name = self.get_file_name(metadata)
-
-        return file_name in self.CONFIGURATION_FILES
-
-    def is_implementation_file(self, metadata: dict) -> bool:
-        """
-        Determine whether a file looks like an implementation module.
-        """
-
-        if not self.is_source_file(metadata):
-            return False
-
-        if self.is_test_file(metadata):
-            return False
-
-        file_stem = self.get_file_stem(metadata)
-
-        if not file_stem:
-            return False
-
-        for indicator in self.IMPLEMENTATION_FILE_INDICATORS:
-            if indicator in file_stem:
-                return True
-
-        return False
-
-    def is_function_or_class_chunk(self, metadata: dict) -> bool:
-        """
-        Detect chunks produced from actual functions/classes.
-        """
-
-        chunk_type = str(
-            metadata.get(
-                "chunk_type",
-                "",
-            )
-        ).lower()
-
-        implementation_chunk_types = {
-            "function",
-            "class",
-            "method",
-            "async_function",
-            "implementation",
-        }
-
-        return chunk_type in implementation_chunk_types
-
-    # =========================================================
-    # QUERY FILTERING
-    # =========================================================
-
-    def should_include_result(
+    def should_keep_result(
         self,
         metadata: dict,
-        query_intent: str,
+        intent: str,
     ) -> bool:
-        """
-        Decide whether a retrieved result should participate
-        in final ranking.
-        """
-
-        if self.is_low_value_file(metadata):
-            return False
 
         extension = self.get_file_extension(metadata)
+        file_name = self.get_file_name(metadata)
 
-        if query_intent in {
-            "code",
-            "implementation",
-        }:
+        if intent == "technology":
             return (
-                self.is_source_file(metadata)
-                or self.is_configuration_file(metadata)
+                file_name in self.HIGH_VALUE_FILES
+                or extension in self.CONFIG_EXTENSIONS
+                or extension in self.DOCUMENT_EXTENSIONS
             )
 
-        if query_intent == "overview":
+        if intent == "overview":
             return (
-                self.is_documentation_file(metadata)
-                or self.is_source_file(metadata)
-                or self.is_configuration_file(metadata)
+                file_name in self.HIGH_VALUE_FILES
+                or extension in self.DOCUMENT_EXTENSIONS
             )
 
-        if query_intent == "technology":
+        if intent == "architecture":
             return (
-                self.is_configuration_file(metadata)
-                or self.is_documentation_file(metadata)
-                or self.is_source_file(metadata)
+                file_name in self.HIGH_VALUE_FILES
+                or extension in self.DOCUMENT_EXTENSIONS
+                or extension in self.SOURCE_EXTENSIONS
             )
 
-        if query_intent == "architecture":
-            return (
-                self.is_documentation_file(metadata)
-                or self.is_source_file(metadata)
-                or self.is_configuration_file(metadata)
-            )
+        if intent == "implementation":
+            return extension in self.SOURCE_EXTENSIONS
 
-        return bool(extension)
+        return True
 
-    # =========================================================
-    # FILE-LEVEL RANKING
-    # =========================================================
+    # ==========================================================
+    # File Boost
+    # ==========================================================
 
     def calculate_file_boost(
         self,
         metadata: dict,
-        query_intent: str,
+        intent: str,
     ) -> float:
-        """
-        Calculate a repository-aware ranking boost.
-        """
 
         file_name = self.get_file_name(metadata)
+        file_stem = self.get_file_stem(metadata)
+        extension = self.get_file_extension(metadata)
 
         boost = 0.0
 
         if file_name in self.HIGH_VALUE_FILES:
-            boost += 0.10
+            boost += 0.30
 
-        if query_intent == "overview":
+        if file_name in self.LOW_VALUE_FILES:
+            boost -= 0.15
 
-            if self.is_documentation_file(metadata):
-                boost += 0.35
+        if extension in self.DOCUMENT_EXTENSIONS:
+            boost += 0.05
 
+        if extension in self.CONFIG_EXTENSIONS:
+            boost += 0.04
+
+        if intent == "technology":
             if file_name in {
-                "readme.md",
-                "readme.txt",
-                "readme",
+                "requirements.txt",
+                "pyproject.toml",
+                "package.json",
+                "pom.xml",
+                "build.gradle",
+                "build.gradle.kts",
             }:
-                boost += 0.35
-
-            if self.is_source_file(metadata):
-                boost += 0.05
-
-        elif query_intent == "technology":
-
-            if self.is_configuration_file(metadata):
-                boost += 0.45
-
-            if self.is_documentation_file(metadata):
-                boost += 0.20
-
-            if self.is_source_file(metadata):
-                boost += 0.05
-
-        elif query_intent == "architecture":
-
-            if self.is_documentation_file(metadata):
                 boost += 0.30
 
-            if self.is_source_file(metadata):
-                boost += 0.20
-
-            if self.is_configuration_file(metadata):
-                boost += 0.15
-
-            if self.is_test_file(metadata):
-                boost -= 0.20
-
-        elif query_intent in {
-            "implementation",
-            "code",
+        if intent in {
+            "overview",
+            "architecture",
         }:
-
-            if self.is_source_file(metadata):
+            if file_name.startswith("readme"):
                 boost += 0.20
 
-            if self.is_function_or_class_chunk(metadata):
-                boost += 0.45
+        if intent == "implementation":
+            if (
+                file_stem.startswith("test_")
+                or file_stem.endswith("_test")
+            ):
+                boost -= 0.03
 
-            if self.is_implementation_file(metadata):
-                boost += 0.30
-
-            if self.is_test_file(metadata):
-                boost -= 0.35
-
-            if self.is_documentation_file(metadata):
-                boost -= 0.05
-
-        else:
-
-            if self.is_source_file(metadata):
-                boost += 0.10
-
-            if self.is_documentation_file(metadata):
-                boost += 0.05
+            if any(
+                keyword in file_stem
+                for keyword in self.IMPLEMENTATION_KEYWORDS
+            ):
+                boost += 0.08
 
         return boost
 
-    # =========================================================
-    # SEMANTIC SCORE
-    # =========================================================
+    # ==========================================================
+    # Semantic Score
+    # ==========================================================
 
     def calculate_semantic_score(
         self,
         distance: float,
     ) -> float:
-        """
-        Convert Chroma distance into a similarity-like score.
-        """
-
-        safe_distance = max(
-            float(distance),
-            0.0,
-        )
 
         return 1.0 / (
-            1.0 + safe_distance
+            1.0 + max(distance, 0.0)
         )
 
-    # =========================================================
+    # ==========================================================
+    # Query Entity Extraction
+    # ==========================================================
+
+    def extract_entity_name(
+        self,
+        query: str,
+    ) -> Optional[str]:
+        """
+        Extract the likely code entity from implementation-style
+        questions.
+
+        Examples:
+
+            "Where is retrieve_context defined?"
+                -> retrieve_context
+
+            "What does answer_question do?"
+                -> answer_question
+
+            "Where is UserService implemented?"
+                -> UserService
+        """
+
+        query_text = query.strip()
+
+        if not query_text:
+            return None
+
+        words = (
+            query_text
+            .replace("?", "")
+            .replace(",", " ")
+            .split()
+        )
+
+        stop_words = {
+            "where",
+            "is",
+            "are",
+            "the",
+            "a",
+            "an",
+            "what",
+            "does",
+            "do",
+            "how",
+            "why",
+            "when",
+            "which",
+            "function",
+            "class",
+            "method",
+            "defined",
+            "define",
+            "implemented",
+            "implementation",
+            "used",
+            "use",
+            "uses",
+            "called",
+            "call",
+            "code",
+            "logic",
+            "in",
+            "this",
+            "project",
+            "file",
+        }
+
+        candidates = []
+
+        for word in words:
+            cleaned = word.strip(
+                "`'\"()[]{}:;."
+            )
+
+            if not cleaned:
+                continue
+
+            if cleaned.lower() in stop_words:
+                continue
+
+            # Code identifiers commonly contain underscores,
+            # camelCase, PascalCase, or digits.
+            if (
+                "_" in cleaned
+                or any(
+                    character.isupper()
+                    for character in cleaned
+                )
+                or any(
+                    character.isdigit()
+                    for character in cleaned
+                )
+            ):
+                candidates.append(cleaned)
+
+        if candidates:
+            return candidates[-1]
+
+        # Fallback: use the last meaningful word.
+        meaningful_words = []
+
+        for word in words:
+            cleaned = word.strip(
+                "`'\"()[]{}:;."
+            )
+
+            if (
+                cleaned
+                and cleaned.lower() not in stop_words
+            ):
+                meaningful_words.append(cleaned)
+
+        if meaningful_words:
+            return meaningful_words[-1]
+
+        return None
+
+    # ==========================================================
+    # Code-Aware Intent
+    # ==========================================================
+
+    def detect_code_intent(
+        self,
+        query: str,
+    ) -> str:
+        """
+        Detect the user's requested relationship with a code entity.
+
+        Returns:
+
+            definition
+            usage
+            explanation
+            general
+        """
+
+        query_lower = query.lower().strip()
+
+        # ------------------------------------------------------
+        # Usage terms
+        # ------------------------------------------------------
+
+        usage_terms = {
+            "where is it used",
+            "where is it called",
+            "where is this used",
+            "where is this called",
+            "where is used",
+            "where is called",
+            "usages",
+            "usage",
+            "calls",
+            "called",
+            "references",
+            "referenced",
+            "imports",
+            "imported",
+            "who calls",
+            "who uses",
+            "which functions use",
+        }
+
+        if any(
+            term in query_lower
+            for term in usage_terms
+        ):
+            return "usage"
+
+        # ------------------------------------------------------
+        # Entity-specific usage patterns
+        #
+        # These handle questions such as:
+        #
+        # "Where is retrieve_context used?"
+        # "Where is retrieve_context called?"
+        # "Where is UserService referenced?"
+        # ------------------------------------------------------
+
+        entity_usage_patterns = [
+            r"\bwhere\s+is\s+.+\s+used\b",
+            r"\bwhere\s+is\s+.+\s+called\b",
+            r"\bwhere\s+is\s+.+\s+referenced\b",
+            r"\bwhere\s+is\s+.+\s+imported\b",
+            r"\bwhere\s+are\s+.+\s+used\b",
+            r"\bwhere\s+are\s+.+\s+called\b",
+            r"\bwhere\s+can\s+i\s+find\s+.+\s+usages?\b",
+            r"\bwho\s+calls\s+.+\b",
+            r"\bwho\s+uses\s+.+\b",
+        ]
+
+        if any(
+            re.search(
+                pattern,
+                query_lower,
+            )
+            for pattern in entity_usage_patterns
+        ):
+            return "usage"
+
+        # ------------------------------------------------------
+        # Explanation terms
+        # ------------------------------------------------------
+
+        explanation_terms = {
+            "what does",
+            "how does",
+            "explain",
+            "what is the purpose",
+            "how is it implemented",
+            "how does it work",
+            "what does it do",
+        }
+
+        if any(
+            term in query_lower
+            for term in explanation_terms
+        ):
+            return "explanation"
+
+        # Entity-specific explanation patterns.
+        entity_explanation_patterns = [
+            r"\bwhat\s+does\s+.+\s+do\b",
+            r"\bhow\s+does\s+.+\s+work\b",
+            r"\bexplain\s+.+\b",
+            r"\bwhat\s+is\s+the\s+purpose\s+of\s+.+\b",
+        ]
+
+        if any(
+            re.search(
+                pattern,
+                query_lower,
+            )
+            for pattern in entity_explanation_patterns
+        ):
+            return "explanation"
+
+        # ------------------------------------------------------
+        # Definition terms
+        # ------------------------------------------------------
+
+        definition_terms = {
+            "where is",
+            "defined",
+            "definition",
+            "declare",
+            "declared",
+            "implemented",
+            "implementation",
+        }
+
+        if any(
+            term in query_lower
+            for term in definition_terms
+        ):
+            return "definition"
+
+        # Entity-specific definition patterns.
+        entity_definition_patterns = [
+            r"\bwhere\s+is\s+.+\s+defined\b",
+            r"\bwhere\s+is\s+.+\s+implemented\b",
+            r"\bwhere\s+is\s+the\s+definition\s+of\s+.+\b",
+        ]
+
+        if any(
+            re.search(
+                pattern,
+                query_lower,
+            )
+            for pattern in entity_definition_patterns
+        ):
+            return "definition"
+
+        return "general"
+
+    # ==========================================================
+    # Code-Aware Ranking
+    # ==========================================================
+
+    def calculate_code_aware_boost(
+        self,
+        query: str,
+        metadata: dict,
+        content: str,
+        intent: str,
+    ) -> float:
+        """
+        Apply code-specific ranking rules after cross-encoder
+        reranking.
+
+        The ranking behavior is intentionally different for:
+
+            definition
+            usage
+            explanation
+
+        so that a caller does not outrank a definition for a
+        definition query, and a definition does not outrank
+        callers for a usage query.
+        """
+
+        if intent != "implementation":
+            return 0.0
+
+        code_intent = self.detect_code_intent(query)
+
+        entity_name = self.extract_entity_name(query)
+
+        if not entity_name:
+            return 0.0
+
+        metadata_name = str(
+            metadata.get("name", "")
+        ).strip()
+
+        chunk_type = str(
+            metadata.get("chunk_type", "")
+        ).strip().lower()
+
+        content_text = content or ""
+        content_lower = content_text.lower()
+
+        entity_lower = entity_name.lower()
+        metadata_name_lower = metadata_name.lower()
+
+        boost = 0.0
+
+        is_exact_entity = (
+            metadata_name_lower == entity_lower
+        )
+
+        is_definition_chunk = chunk_type in {
+            "function",
+            "class",
+            "method",
+        }
+
+        # ------------------------------------------------------
+        # Definition query
+        # ------------------------------------------------------
+
+        if code_intent == "definition":
+
+            # Exact entity metadata match.
+            if is_exact_entity:
+                boost += (
+                    self.EXACT_ENTITY_NAME_BONUS
+                )
+
+            # Actual AST/function/class definition.
+            if is_definition_chunk:
+                boost += (
+                    self.FUNCTION_DEFINITION_BONUS
+                )
+
+            # Strong signal: metadata and definition both
+            # identify the requested entity.
+            if is_exact_entity:
+                boost += self.DEFINITION_BONUS
+
+            definition_patterns = [
+                f"def {entity_name}(",
+                f"class {entity_name}",
+                f"function {entity_name}(",
+                f"{entity_name} = function",
+                f"{entity_name} = async function",
+            ]
+
+            if any(
+                pattern.lower() in content_lower
+                for pattern in definition_patterns
+            ):
+                boost += self.USAGE_BONUS
+
+        # ------------------------------------------------------
+        # Usage query
+        # ------------------------------------------------------
+
+        elif code_intent == "usage":
+
+            # --------------------------------------------------
+            # Definition penalty
+            # --------------------------------------------------
+            #
+            # If this is the exact entity's own definition,
+            # penalize it because the user asked for usages.
+            #
+
+            if (
+                is_definition_chunk
+                and is_exact_entity
+            ):
+                boost += (
+                    self.USAGE_DEFINITION_PENALTY
+                )
+
+            # --------------------------------------------------
+            # Actual caller detection
+            # --------------------------------------------------
+
+            if is_definition_chunk:
+
+                call_patterns = [
+                    f"{entity_name}(",
+                    f".{entity_name}(",
+                ]
+
+                contains_call = any(
+                    pattern.lower() in content_lower
+                    for pattern in call_patterns
+                )
+
+                definition_patterns = [
+                    f"def {entity_name}(",
+                    f"function {entity_name}(",
+                    f"class {entity_name}",
+                ]
+
+                is_own_definition = any(
+                    pattern.lower() in content_lower
+                    for pattern in definition_patterns
+                )
+
+                # A function containing the entity call is a
+                # genuine usage only if it isn't the entity's
+                # own definition.
+                if (
+                    contains_call
+                    and not (
+                        is_exact_entity
+                        and is_own_definition
+                    )
+                ):
+                    boost += (
+                        self.USAGE_CALL_BONUS
+                    )
+
+            # --------------------------------------------------
+            # Text/code references
+            # --------------------------------------------------
+
+            if chunk_type in {
+                "text_block",
+                "code_block",
+            }:
+                boost += (
+                    self.USAGE_REFERENCE_BONUS
+                )
+
+            # --------------------------------------------------
+            # Import / call / reference patterns
+            # --------------------------------------------------
+
+            usage_patterns = [
+                f"import {entity_name}",
+                f"from {entity_name}",
+                f"{entity_name}(",
+                f".{entity_name}(",
+            ]
+
+            contains_usage_pattern = any(
+                pattern.lower() in content_lower
+                for pattern in usage_patterns
+            )
+
+            # Python-style:
+            #
+            # from rag import retrieve_context
+            #
+            # This is not covered by "from retrieve_context".
+            #
+            python_import_pattern = (
+                rf"\bfrom\s+\S+\s+import\s+.*\b"
+                rf"{re.escape(entity_name)}\b"
+            )
+
+            generic_import_pattern = (
+                rf"\bimport\s+.*\b"
+                rf"{re.escape(entity_name)}\b"
+            )
+
+            if (
+                contains_usage_pattern
+                or re.search(
+                    python_import_pattern,
+                    content_text,
+                    flags=re.IGNORECASE,
+                )
+                or re.search(
+                    generic_import_pattern,
+                    content_text,
+                    flags=re.IGNORECASE,
+                )
+            ):
+                boost += (
+                    self.USAGE_CALL_BONUS
+                )
+
+        # ------------------------------------------------------
+        # Explanation query
+        # ------------------------------------------------------
+
+        elif code_intent == "explanation":
+
+            # --------------------------------------------------
+            # Exact entity definition
+            # --------------------------------------------------
+            #
+            # Only boost a definition chunk strongly if it is
+            # actually the requested entity.
+            #
+            # This prevents unrelated functions such as:
+            #
+            #     clean_text()
+            #
+            # from receiving a definition bonus.
+            #
+
+            if (
+                is_definition_chunk
+                and is_exact_entity
+            ):
+                boost += (
+                    self.EXPLANATION_DEFINITION_BONUS
+                )
+
+                boost += (
+                    self.EXACT_ENTITY_NAME_BONUS
+                )
+
+                boost += (
+                    self.FUNCTION_DEFINITION_BONUS
+                )
+
+            # --------------------------------------------------
+            # Related caller
+            # --------------------------------------------------
+            #
+            # If another function contains a real reference to
+            # the requested entity, give it a smaller bonus.
+            #
+
+            elif (
+                is_definition_chunk
+                and not is_exact_entity
+            ):
+
+                call_patterns = [
+                    f"{entity_name}(",
+                    f".{entity_name}(",
+                ]
+
+                contains_call = any(
+                    pattern.lower() in content_lower
+                    for pattern in call_patterns
+                )
+
+                if contains_call:
+                    boost += (
+                        self.EXPLANATION_RELATED_CODE_BONUS
+                    )
+
+        return boost
+
+    # ==========================================================
+    # Hybrid Candidate Collection
+    # ==========================================================
+
+    def collect_candidates(
+        self,
+        repository_id: str,
+        query: str,
+        top_k: int,
+    ) -> dict:
+
+        candidate_k = max(
+            top_k * self.HYBRID_CANDIDATE_MULTIPLIER,
+            10,
+        )
+
+        query_embedding = (
+            self.embedding_service.embed_query(query)
+        )
+
+        semantic_results = self.vector_store.search(
+            repository_id=repository_id,
+            query_embedding=query_embedding,
+            top_k=candidate_k,
+        )
+
+        keyword_results = self.keyword_store.search(
+            repository_id=repository_id,
+            query=query,
+            top_k=candidate_k,
+        )
+
+        candidates = {}
+
+        # ------------------------------------------------------
+        # Semantic candidates
+        # ------------------------------------------------------
+
+        semantic_documents = semantic_results.get(
+            "documents",
+            [[]],
+        )[0]
+
+        semantic_metadatas = semantic_results.get(
+            "metadatas",
+            [[]],
+        )[0]
+
+        semantic_distances = semantic_results.get(
+            "distances",
+            [[]],
+        )[0]
+
+        semantic_ids = semantic_results.get(
+            "ids",
+            [[]],
+        )[0]
+
+        for index, content in enumerate(
+            semantic_documents
+        ):
+
+            metadata = semantic_metadatas[index]
+            distance = semantic_distances[index]
+
+            chunk_id = (
+                semantic_ids[index]
+                if index < len(semantic_ids)
+                else metadata.get("chunk_id")
+            )
+
+            if not chunk_id:
+                chunk_id = (
+                    f"{metadata.get('repository_id', repository_id)}_"
+                    f"{metadata.get('file_path', 'unknown')}_"
+                    f"{metadata.get('start_line', index)}"
+                )
+
+            candidates[chunk_id] = {
+                "chunk_id": chunk_id,
+                "content": content,
+                "metadata": metadata,
+                "distance": float(distance),
+                "semantic_rank": index + 1,
+                "keyword_rank": None,
+                "keyword_score": 0.0,
+            }
+
+        # ------------------------------------------------------
+        # Keyword candidates
+        # ------------------------------------------------------
+
+        for keyword_result in keyword_results:
+
+            chunk_id = keyword_result["chunk_id"]
+
+            if chunk_id not in candidates:
+
+                candidates[chunk_id] = {
+                    "chunk_id": chunk_id,
+                    "content": keyword_result["content"],
+                    "metadata": keyword_result["metadata"],
+                    "distance": 0.0,
+                    "semantic_rank": None,
+                    "keyword_rank": keyword_result["rank"],
+                    "keyword_score": keyword_result.get(
+                        "keyword_score",
+                        0.0,
+                    ),
+                }
+
+            else:
+
+                candidates[chunk_id]["keyword_rank"] = (
+                    keyword_result["rank"]
+                )
+
+                candidates[chunk_id]["keyword_score"] = (
+                    keyword_result.get(
+                        "keyword_score",
+                        0.0,
+                    )
+                )
+
+        return candidates
+
+    # ==========================================================
     # RRF
-    # =========================================================
+    # ==========================================================
 
     def calculate_rrf_score(
         self,
-        semantic_rank: int | None,
-        keyword_rank: int | None,
+        candidate: dict,
     ) -> float:
-        """
-        Calculate Reciprocal Rank Fusion score.
-
-        A chunk receives evidence from either or both retrieval
-        systems.
-
-        If a chunk appears in both rankings, the contributions
-        are added together.
-        """
 
         score = 0.0
+
+        semantic_rank = candidate.get(
+            "semantic_rank"
+        )
+
+        keyword_rank = candidate.get(
+            "keyword_rank"
+        )
 
         if semantic_rank is not None:
             score += 1.0 / (
@@ -619,9 +1117,9 @@ class SearchService:
 
         return score
 
-    # =========================================================
-    # HYBRID SEARCH
-    # =========================================================
+    # ==========================================================
+    # Search
+    # ==========================================================
 
     def search(
         self,
@@ -629,35 +1127,10 @@ class SearchService:
         query: str,
         top_k: int = 5,
     ) -> list[dict]:
-        """
-        Perform hybrid repository search.
-
-        Flow:
-
-        Query
-          ↓
-        Intent detection
-          ↓
-        ┌─────────────────────┐
-        │                     │
-        ↓                     ↓
-      ChromaDB             SQLite FTS5
-      Semantic             Keyword/BM25
-        │                     │
-        └──────────┬──────────┘
-                   ↓
-                 RRF
-                   ↓
-          Query-intent filtering
-                   ↓
-          Repository-aware ranking
-                   ↓
-                  Top-K
-        """
 
         if not repository_id:
             raise ValueError(
-                "repository_id is required."
+                "Repository ID cannot be empty."
             )
 
         if not query or not query.strip():
@@ -670,330 +1143,186 @@ class SearchService:
                 "top_k must be greater than 0."
             )
 
-        # -----------------------------------------------------
-        # Detect query intent
-        # -----------------------------------------------------
-
-        query_intent = self.detect_query_intent(
+        intent = self.detect_query_intent(
             query
         )
 
-        # -----------------------------------------------------
-        # Candidate count
-        # -----------------------------------------------------
-
-        candidate_k = max(
-            top_k * self.HYBRID_CANDIDATE_MULTIPLIER,
-            20,
-        )
-
-        # =====================================================
-        # 1. SEMANTIC SEARCH
-        # =====================================================
-
-        query_embedding = (
-            self.embedding_service.embed_query(
-                query
-            )
-        )
-
-        semantic_response = (
-            self.vector_store.search(
-                repository_id=repository_id,
-                query_embedding=query_embedding,
-                top_k=candidate_k,
-            )
-        )
-
-        semantic_documents = semantic_response.get(
-            "documents",
-            [[]],
-        )
-
-        semantic_metadatas = semantic_response.get(
-            "metadatas",
-            [[]],
-        )
-
-        semantic_distances = semantic_response.get(
-            "distances",
-            [[]],
-        )
-
-        semantic_ids = semantic_response.get(
-            "ids",
-            [[]],
-        )
-
-        semantic_documents = (
-            semantic_documents[0]
-            if semantic_documents
-            else []
-        )
-
-        semantic_metadatas = (
-            semantic_metadatas[0]
-            if semantic_metadatas
-            else []
-        )
-
-        semantic_distances = (
-            semantic_distances[0]
-            if semantic_distances
-            else []
-        )
-
-        semantic_ids = (
-            semantic_ids[0]
-            if semantic_ids
-            else []
-        )
-
-        # =====================================================
-        # 2. KEYWORD / BM25 SEARCH
-        # =====================================================
-
-        keyword_results = self.keyword_store.search(
+        candidates = self.collect_candidates(
             repository_id=repository_id,
             query=query,
-            top_k=candidate_k,
+            top_k=top_k,
         )
 
-        # =====================================================
-        # 3. BUILD UNIFIED CANDIDATE MAP
-        # =====================================================
+        if not candidates:
+            return []
 
-        candidates = {}
+        # ------------------------------------------------------
+        # Calculate RRF + existing CodeLens ranking
+        # ------------------------------------------------------
 
-        # -----------------------------------------------------
-        # Semantic candidates
-        # -----------------------------------------------------
-
-        for index, content in enumerate(
-            semantic_documents
-        ):
-
-            metadata = (
-                semantic_metadatas[index]
-                if index < len(semantic_metadatas)
-                else {}
-            )
-
-            distance = (
-                semantic_distances[index]
-                if index < len(semantic_distances)
-                else 0.0
-            )
-
-            chunk_id = (
-                semantic_ids[index]
-                if index < len(semantic_ids)
-                else metadata.get("chunk_id")
-            )
-
-            if not chunk_id:
-                chunk_id = (
-                    f"semantic_{index}_{metadata.get('file_path', '')}"
-                )
-
-            candidates[chunk_id] = {
-                "chunk_id": chunk_id,
-                "content": content,
-                "metadata": metadata,
-                "distance": distance,
-                "semantic_rank": index + 1,
-                "keyword_rank": None,
-                "keyword_score": 0.0,
-            }
-
-        # -----------------------------------------------------
-        # Keyword candidates
-        # -----------------------------------------------------
-
-        for index, result in enumerate(
-            keyword_results
-        ):
-
-            chunk_id = result.get(
-                "chunk_id"
-            )
-
-            if not chunk_id:
-                continue
-
-            if chunk_id not in candidates:
-
-                candidates[chunk_id] = {
-                    "chunk_id": chunk_id,
-                    "content": result.get(
-                        "content",
-                        "",
-                    ),
-                    "metadata": result.get(
-                        "metadata",
-                        {},
-                    ),
-                    "distance": None,
-                    "semantic_rank": None,
-                    "keyword_rank": index + 1,
-                    "keyword_score": result.get(
-                        "keyword_score",
-                        0.0,
-                    ),
-                }
-
-            else:
-
-                candidates[chunk_id][
-                    "keyword_rank"
-                ] = index + 1
-
-                candidates[chunk_id][
-                    "keyword_score"
-                ] = result.get(
-                    "keyword_score",
-                    0.0,
-                )
-
-        # =====================================================
-        # 4. RRF FUSION
-        # =====================================================
-
-        fused_results = []
+        ranked_candidates = []
 
         for candidate in candidates.values():
 
-            rrf_score = self.calculate_rrf_score(
-                semantic_rank=candidate[
-                    "semantic_rank"
-                ],
-                keyword_rank=candidate[
-                    "keyword_rank"
-                ],
-            )
+            metadata = candidate["metadata"]
 
-            candidate["rrf_score"] = rrf_score
-
-            fused_results.append(candidate)
-
-        # -----------------------------------------------------
-        # RRF ranking
-        # -----------------------------------------------------
-
-        fused_results.sort(
-            key=lambda item: item[
-                "rrf_score"
-            ],
-            reverse=True,
-        )
-
-        # =====================================================
-        # 5. FILTER + REPOSITORY-AWARE RANKING
-        # =====================================================
-
-        ranked_results = []
-
-        for candidate in fused_results:
-
-            metadata = candidate.get(
-                "metadata",
-                {},
-            )
-
-            if not self.should_include_result(
-                metadata=metadata,
-                query_intent=query_intent,
+            if not self.should_keep_result(
+                metadata,
+                intent,
             ):
                 continue
 
-            # -------------------------------------------------
-            # Base hybrid score
-            #
-            # RRF determines retrieval agreement.
-            # Semantic similarity remains available when
-            # Chroma retrieved the candidate.
-            # -------------------------------------------------
+            rrf_score = self.calculate_rrf_score(
+                candidate
+            )
 
-            rrf_score = candidate[
-                "rrf_score"
-            ]
-
-            semantic_score = 0.0
-
-            if candidate[
-                "distance"
-            ] is not None:
-
-                semantic_score = (
-                    self.calculate_semantic_score(
-                        candidate["distance"]
-                    )
-                )
-
-            file_boost = (
-                self.calculate_file_boost(
-                    metadata=metadata,
-                    query_intent=query_intent,
+            semantic_score = (
+                self.calculate_semantic_score(
+                    candidate["distance"]
                 )
             )
 
-            # -------------------------------------------------
-            # Normalize the relative influence.
-            #
-            # RRF is the primary retrieval signal.
-            # Semantic similarity provides additional
-            # information for semantic-only / semantic-ranked
-            # candidates.
-            # -------------------------------------------------
+            file_boost = self.calculate_file_boost(
+                metadata,
+                intent,
+            )
 
-            final_score = (
+            final_rrf_score = (
                 rrf_score
                 + (0.10 * semantic_score)
                 + file_boost
             )
 
-            candidate["score"] = final_score
+            result = dict(candidate)
 
-            ranked_results.append(
-                candidate
+            result["rrf_score"] = rrf_score
+            result["semantic_score"] = semantic_score
+            result["file_boost"] = file_boost
+            result["final_rrf_score"] = (
+                final_rrf_score
             )
 
-        # =====================================================
-        # 6. FINAL SORT
-        # =====================================================
+            ranked_candidates.append(result)
 
-        ranked_results.sort(
+        ranked_candidates.sort(
             key=lambda item: item[
-                "score"
+                "final_rrf_score"
             ],
             reverse=True,
         )
 
-        # =====================================================
-        # 7. RETURN TOP-K
-        # =====================================================
+        if not ranked_candidates:
+            return []
+
+        # ------------------------------------------------------
+        # Cross-Encoder reranking
+        #
+        # Keep a larger candidate pool so that code-aware
+        # ranking can rescue a relevant code chunk that the
+        # cross-encoder placed below the final Top-K.
+        # ------------------------------------------------------
+
+        if self.reranker is not None:
+
+            try:
+
+                rerank_top_k = min(
+                    len(ranked_candidates),
+                    max(top_k * 4, 20),
+                )
+
+                reranked_candidates = (
+                    self.reranker.rerank(
+                        query=query,
+                        candidates=ranked_candidates,
+                        top_k=rerank_top_k,
+                    )
+                )
+
+            except Exception as error:
+
+                print(
+                    "Reranker failed. "
+                    f"Falling back to RRF results: {error}"
+                )
+
+                reranked_candidates = (
+                    ranked_candidates[:top_k]
+                )
+
+        else:
+
+            reranked_candidates = (
+                ranked_candidates[:top_k]
+            )
+
+        # ------------------------------------------------------
+        # Code-aware ranking
+        # ------------------------------------------------------
+
+        for result in reranked_candidates:
+
+            code_aware_boost = (
+                self.calculate_code_aware_boost(
+                    query=query,
+                    metadata=result["metadata"],
+                    content=result["content"],
+                    intent=intent,
+                )
+            )
+
+            result["code_aware_boost"] = (
+                code_aware_boost
+            )
+
+            # The reranker remains the main relevance signal.
+            # Code-aware rules provide controlled adjustments
+            # for repository-specific code relationships.
+            reranker_score = result.get(
+                "reranker_score"
+            )
+
+            if reranker_score is None:
+                reranker_score = 0.0
+
+            result["final_score"] = (
+                reranker_score
+                + code_aware_boost
+            )
+
+        reranked_candidates.sort(
+            key=lambda item: item[
+                "final_score"
+            ],
+            reverse=True,
+        )
+
+        # ------------------------------------------------------
+        # Final API response
+        # ------------------------------------------------------
 
         final_results = []
 
         for rank, result in enumerate(
-            ranked_results[:top_k],
+            reranked_candidates[:top_k],
             start=1,
         ):
 
             final_results.append(
                 {
                     "rank": rank,
-                    "content": result[
-                        "content"
-                    ],
-                    "metadata": result[
-                        "metadata"
-                    ],
-                    "distance": (
-                        result["distance"]
-                        if result["distance"]
-                        is not None
-                        else 0.0
+                    "content": result["content"],
+                    "metadata": result["metadata"],
+                    "distance": result.get(
+                        "distance",
+                        0.0,
+                    ),
+                    "reranker_score": result.get(
+                        "reranker_score"
+                    ),
+                    "code_aware_boost": result.get(
+                        "code_aware_boost",
+                        0.0,
                     ),
                 }
             )
