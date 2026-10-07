@@ -17,6 +17,7 @@ from rag.keyword_store import KeywordStore
 from rag.search_service import SearchService
 from rag.llm_service import LLMService
 from rag.rag_service import RAGService
+from rag.reranker import Reranker
 
 from analysis.overview_analyzer import RepositoryOverviewAnalyzer
 from analysis.tech_stack_detector import TechnologyStackDetector
@@ -71,11 +72,13 @@ vector_store = VectorStore()
 # Persistent keyword/BM25 search index.
 # This complements ChromaDB semantic search.
 keyword_store = KeywordStore()
+reranker = Reranker()
 
 search_service = SearchService(
     embedding_service,
     vector_store,
-    keyword_store
+    keyword_store,
+    reranker
 )
 
 llm_service = LLMService()
