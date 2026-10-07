@@ -3,12 +3,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from config import REPOSITORIES_DIR
-from repository.manager import (save_uploaded_repository, get_supported_files,)
+
+from repository.manager import (
+    save_uploaded_repository,
+    get_supported_files,
+)
+
+from repository.chunker import chunk_repository
+
 from rag.embedding_service import EmbeddingService
 from rag.vector_store import VectorStore
+from rag.keyword_store import KeywordStore
 from rag.search_service import SearchService
 from rag.llm_service import LLMService
 from rag.rag_service import RAGService
+
 from analysis.overview_analyzer import RepositoryOverviewAnalyzer
 from analysis.tech_stack_detector import TechnologyStackDetector
 from analysis.importance_analyzer import ImportantFileAnalyzer
@@ -18,8 +27,10 @@ from analysis.architecture_analyzer import ArchitectureAnalyzer
 from analysis.dependency_analyzer import DependencyAnalyzer
 from analysis.impact_analyzer import ImpactAnalyzer
 from analysis.onboarding_analyzer import OnboardingAnalyzer
+
 from services.progress_service import progress_service
-from repository.chunker import chunk_repository
+
+
 # ============================================================
 # APP CONFIGURATION
 # ============================================================
@@ -57,9 +68,14 @@ embedding_service = EmbeddingService()
 
 vector_store = VectorStore()
 
+# Persistent keyword/BM25 search index.
+# This complements ChromaDB semantic search.
+keyword_store = KeywordStore()
+
 search_service = SearchService(
     embedding_service,
     vector_store,
+    keyword_store
 )
 
 llm_service = LLMService()
@@ -80,9 +96,12 @@ class AskRequest(BaseModel):
     question: str
     top_k: int = 5
 
+
 class SearchRequest(BaseModel):
     query: str
     top_k: int = 5
+
+
 # ============================================================
 # ROOT / HEALTH
 # ============================================================
@@ -136,9 +155,7 @@ async def upload_repository(
         )
 
     try:
-        repository = await save_uploaded_repository(
-            file
-        )
+        repository = await save_uploaded_repository(file)
 
         return {
             "message": "Repository uploaded successfully.",
@@ -147,17 +164,13 @@ async def upload_repository(
         }
 
     except ValueError as exc:
-
         raise HTTPException(
             status_code=400,
             detail=str(exc),
         )
 
     except Exception as exc:
-
-        print(
-            f"Repository upload failed: {exc}"
-        )
+        print(f"Repository upload failed: {exc}")
 
         raise HTTPException(
             status_code=500,
@@ -166,6 +179,7 @@ async def upload_repository(
                 f"{str(exc)}"
             ),
         )
+
 
 # ============================================================
 # REPOSITORY OVERVIEW
@@ -182,9 +196,7 @@ def get_repository_overview(
     deterministic repository-level information.
     """
 
-    repository_path = (
-        REPOSITORIES_DIR / repository_id
-    )
+    repository_path = REPOSITORIES_DIR / repository_id
 
     if not repository_path.exists():
         raise HTTPException(
@@ -199,7 +211,6 @@ def get_repository_overview(
         )
 
     try:
-
         analyzer = RepositoryOverviewAnalyzer(
             repository_path
         )
@@ -212,17 +223,13 @@ def get_repository_overview(
         }
 
     except ValueError as exc:
-
         raise HTTPException(
             status_code=400,
             detail=str(exc),
         )
 
     except Exception as exc:
-
-        print(
-            f"Repository overview failed: {exc}"
-        )
+        print(f"Repository overview failed: {exc}")
 
         raise HTTPException(
             status_code=500,
@@ -231,6 +238,8 @@ def get_repository_overview(
                 f"{str(exc)}"
             ),
         )
+
+
 # ============================================================
 # TECHNOLOGY STACK
 # ============================================================
@@ -251,9 +260,7 @@ def get_technology_stack(
     - project configuration
     """
 
-    repository_path = (
-        REPOSITORIES_DIR / repository_id
-    )
+    repository_path = REPOSITORIES_DIR / repository_id
 
     if not repository_path.exists():
         raise HTTPException(
@@ -268,7 +275,6 @@ def get_technology_stack(
         )
 
     try:
-
         detector = TechnologyStackDetector(
             repository_path
         )
@@ -281,14 +287,12 @@ def get_technology_stack(
         }
 
     except ValueError as exc:
-
         raise HTTPException(
             status_code=400,
             detail=str(exc),
         )
 
     except Exception as exc:
-
         print(
             f"Technology stack detection failed: {exc}"
         )
@@ -300,6 +304,8 @@ def get_technology_stack(
                 f"{str(exc)}"
             ),
         )
+
+
 # ============================================================
 # IMPORTANT FILES
 # ============================================================
@@ -316,9 +322,7 @@ def get_important_files(
     understanding the repository.
     """
 
-    repository_path = (
-        REPOSITORIES_DIR / repository_id
-    )
+    repository_path = REPOSITORIES_DIR / repository_id
 
     if not repository_path.exists():
         raise HTTPException(
@@ -339,7 +343,6 @@ def get_important_files(
         )
 
     try:
-
         analyzer = ImportantFileAnalyzer(
             repository_path
         )
@@ -357,14 +360,12 @@ def get_important_files(
         }
 
     except ValueError as exc:
-
         raise HTTPException(
             status_code=400,
             detail=str(exc),
         )
 
     except Exception as exc:
-
         print(
             f"Important file analysis failed: {exc}"
         )
@@ -376,6 +377,8 @@ def get_important_files(
                 f"{str(exc)}"
             ),
         )
+
+
 # ============================================================
 # REPOSITORY STRUCTURE
 # ============================================================
@@ -390,9 +393,7 @@ def get_repository_structure(
     Analyze the structural organization of a repository.
     """
 
-    repository_path = (
-        REPOSITORIES_DIR / repository_id
-    )
+    repository_path = REPOSITORIES_DIR / repository_id
 
     if not repository_path.exists():
         raise HTTPException(
@@ -407,7 +408,6 @@ def get_repository_structure(
         )
 
     try:
-
         analyzer = RepositoryStructureAnalyzer(
             repository_path
         )
@@ -420,14 +420,12 @@ def get_repository_structure(
         }
 
     except ValueError as exc:
-
         raise HTTPException(
             status_code=400,
             detail=str(exc),
         )
 
     except Exception as exc:
-
         print(
             f"Repository structure analysis failed: {exc}"
         )
@@ -439,6 +437,8 @@ def get_repository_structure(
                 f"{str(exc)}"
             ),
         )
+
+
 # ============================================================
 # API DISCOVERY
 # ============================================================
@@ -453,9 +453,7 @@ def get_repository_apis(
     Discover API endpoints exposed by a repository.
     """
 
-    repository_path = (
-        REPOSITORIES_DIR / repository_id
-    )
+    repository_path = REPOSITORIES_DIR / repository_id
 
     if not repository_path.exists():
         raise HTTPException(
@@ -470,7 +468,6 @@ def get_repository_apis(
         )
 
     try:
-
         analyzer = APIAnalyzer(
             repository_path
         )
@@ -483,14 +480,12 @@ def get_repository_apis(
         }
 
     except ValueError as exc:
-
         raise HTTPException(
             status_code=400,
             detail=str(exc),
         )
 
     except Exception as exc:
-
         print(
             f"API discovery failed: {exc}"
         )
@@ -502,14 +497,25 @@ def get_repository_apis(
                 f"{str(exc)}"
             ),
         )
-@app.get("/api/repositories/{repository_id}/architecture")
-def get_repository_architecture(repository_id: str):
+
+
+# ============================================================
+# ARCHITECTURE
+# ============================================================
+
+@app.get(
+    "/api/repositories/{repository_id}/architecture"
+)
+def get_repository_architecture(
+    repository_id: str
+):
     """
     Analyze the static architecture of a repository.
     """
 
     try:
         analyzer = ArchitectureAnalyzer(repository_id)
+
         result = analyzer.analyze()
 
         return {
@@ -534,8 +540,18 @@ def get_repository_architecture(repository_id: str):
             status_code=500,
             detail=f"Architecture analysis failed: {str(exc)}",
         )
-@app.get("/api/repositories/{repository_id}/dependencies")
-def analyze_dependencies(repository_id: str):
+
+
+# ============================================================
+# DEPENDENCIES
+# ============================================================
+
+@app.get(
+    "/api/repositories/{repository_id}/dependencies"
+)
+def analyze_dependencies(
+    repository_id: str
+):
     analyzer = DependencyAnalyzer(repository_id)
 
     try:
@@ -557,6 +573,12 @@ def analyze_dependencies(repository_id: str):
             status_code=500,
             detail=str(exc),
         )
+
+
+# ============================================================
+# FILE IMPACT
+# ============================================================
+
 @app.get(
     "/api/repositories/{repository_id}/impact/{file_path:path}"
 )
@@ -564,9 +586,7 @@ def analyze_file_impact(
     repository_id: str,
     file_path: str,
 ):
-    analyzer = ImpactAnalyzer(
-        repository_id
-    )
+    analyzer = ImpactAnalyzer(repository_id)
 
     try:
         return {
@@ -593,15 +613,19 @@ def analyze_file_impact(
             status_code=500,
             detail=str(exc),
         )
+
+
+# ============================================================
+# REPOSITORY IMPACT
+# ============================================================
+
 @app.get(
     "/api/repositories/{repository_id}/impact"
 )
 def analyze_repository_impact(
     repository_id: str,
 ):
-    analyzer = ImpactAnalyzer(
-        repository_id
-    )
+    analyzer = ImpactAnalyzer(repository_id)
 
     try:
         return {
@@ -620,15 +644,19 @@ def analyze_repository_impact(
             status_code=500,
             detail=str(exc),
         )
+
+
+# ============================================================
+# ONBOARDING
+# ============================================================
+
 @app.get(
     "/api/repositories/{repository_id}/onboarding"
 )
 def analyze_onboarding(
     repository_id: str,
 ):
-    analyzer = OnboardingAnalyzer(
-        repository_id
-    )
+    analyzer = OnboardingAnalyzer(repository_id)
 
     try:
         return {
@@ -653,6 +681,8 @@ def analyze_onboarding(
             status_code=500,
             detail=str(exc),
         )
+
+
 # ============================================================
 # INDEX REPOSITORY
 # ============================================================
@@ -664,7 +694,7 @@ def index_repository(
     repository_id: str
 ):
     """
-    Index an uploaded repository into the vector database.
+    Index an uploaded repository into both retrieval systems.
 
     Indexing pipeline:
 
@@ -674,9 +704,15 @@ def index_repository(
             ↓
         embedding
             ↓
-        indexing
+        ChromaDB + SQLite FTS5
             ↓
         completed
+
+    ChromaDB:
+        Semantic retrieval
+
+    SQLite FTS5:
+        Keyword/BM25 retrieval
 
     Progress is tracked using progress_service.
     """
@@ -742,13 +778,9 @@ def index_repository(
             total_files=0,
             processed_chunks=0,
             total_chunks=0,
-            message=(
-                "Scanning repository files..."
-            )
+            message="Scanning repository files..."
         )
 
-        # Get supported files using the existing
-        # repository manager function.
         files = get_supported_files(
             repository_path
         )
@@ -781,22 +813,8 @@ def index_repository(
             total_files=total_files,
             processed_chunks=0,
             total_chunks=0,
-            message=(
-                "Creating code-aware chunks..."
-            )
+            message="Creating code-aware chunks..."
         )
-
-        # ----------------------------------------------------
-        # Use the existing repository-level chunker.
-        #
-        # This automatically handles:
-        #
-        # Python AST chunking
-        # Normal text chunking
-        # Large-file streaming chunking
-        # Chunk overlap
-        # Deterministic chunk IDs
-        # ----------------------------------------------------
 
         all_chunks = chunk_repository(
             repository_path=repository_path,
@@ -804,9 +822,7 @@ def index_repository(
             files=files
         )
 
-        total_chunks = len(
-            all_chunks
-        )
+        total_chunks = len(all_chunks)
 
         progress_service.update(
             repository_id,
@@ -853,26 +869,20 @@ def index_repository(
             total_files=total_files,
             processed_chunks=0,
             total_chunks=total_chunks,
-            message=(
-                "Generating embeddings..."
-            )
+            message="Generating embeddings..."
         )
 
-        # Extract chunk content for embedding.
         documents = [
             chunk["content"]
             for chunk in all_chunks
         ]
 
-        # Generate embeddings using the existing
-        # EmbeddingService instance.
         embeddings = (
             embedding_service.embed_documents(
                 documents
             )
         )
 
-        # Validate embedding count.
         if len(embeddings) != total_chunks:
 
             raise ValueError(
@@ -894,7 +904,7 @@ def index_repository(
         )
 
         # ====================================================
-        # STEP 4: VECTOR DATABASE
+        # STEP 4: RETRIEVAL INDEXES
         # ====================================================
 
         progress_service.update(
@@ -906,12 +916,12 @@ def index_repository(
             processed_chunks=total_chunks,
             total_chunks=total_chunks,
             message=(
-                "Storing vectors in ChromaDB..."
+                "Building semantic and keyword indexes..."
             )
         )
 
         # ----------------------------------------------------
-        # Remove previous index for this repository.
+        # Remove previous ChromaDB index.
         #
         # This prevents duplicate chunks when the same
         # repository is indexed again.
@@ -922,14 +932,50 @@ def index_repository(
         )
 
         # ----------------------------------------------------
-        # Store chunks + embeddings in ChromaDB.
+        # Remove previous SQLite FTS5 keyword index.
+        #
+        # This keeps the keyword index synchronized with
+        # the latest repository contents.
         # ----------------------------------------------------
 
-        vector_store.add_chunks(
+        keyword_store.delete_repository(
+            repository_id
+        )
+
+        # ----------------------------------------------------
+        # Store semantic vectors in ChromaDB.
+        # ----------------------------------------------------
+
+        vector_count = vector_store.add_chunks(
             repository_id,
             all_chunks,
             embeddings
         )
+
+        if vector_count != total_chunks:
+
+            raise ValueError(
+                "ChromaDB chunk count does not match "
+                "repository chunk count."
+            )
+
+        # ----------------------------------------------------
+        # Store the same chunks in SQLite FTS5.
+        #
+        # FTS5 will provide keyword/BM25 retrieval.
+        # ----------------------------------------------------
+
+        keyword_count = keyword_store.add_chunks(
+            repository_id,
+            all_chunks
+        )
+
+        if keyword_count != total_chunks:
+
+            raise ValueError(
+                "SQLite FTS5 chunk count does not match "
+                "repository chunk count."
+            )
 
         progress_service.update(
             repository_id,
@@ -940,7 +986,8 @@ def index_repository(
             processed_chunks=total_chunks,
             total_chunks=total_chunks,
             message=(
-                "Repository indexed in ChromaDB."
+                "Semantic and keyword indexes "
+                "created successfully."
             )
         )
 
@@ -967,7 +1014,15 @@ def index_repository(
                 "Repository indexed successfully."
             ),
             "total_files": total_files,
-            "total_chunks": total_chunks
+            "total_chunks": total_chunks,
+            "semantic_index": {
+                "store": "ChromaDB",
+                "chunks": vector_count,
+            },
+            "keyword_index": {
+                "store": "SQLite FTS5",
+                "chunks": keyword_count,
+            },
         }
 
     # ========================================================
@@ -983,13 +1038,11 @@ def index_repository(
 
     except Exception as exc:
 
-        # Update progress state to failed.
         progress_service.fail(
             repository_id,
             str(exc)
         )
 
-        # Print error in terminal for debugging.
         print(
             "Repository indexing failed:",
             str(exc)
@@ -999,6 +1052,8 @@ def index_repository(
             status_code=500,
             detail=str(exc)
         )
+
+
 # ============================================================
 # REPOSITORY INDEXING PROGRESS
 # ============================================================
@@ -1018,10 +1073,15 @@ def get_repository_progress(repository_id: str):
     if progress is None:
         raise HTTPException(
             status_code=404,
-            detail="No progress information found for this repository.",
+            detail=(
+                "No progress information found "
+                "for this repository."
+            ),
         )
 
     return progress
+
+
 # ============================================================
 # SEMANTIC SEARCH
 # ============================================================
@@ -1035,6 +1095,11 @@ def semantic_search(
 ):
     """
     Perform semantic search over the selected repository.
+
+    NOTE:
+    This endpoint still uses the existing semantic search
+    service. Hybrid RRF search will be introduced in the
+    next phase.
     """
 
     if not request.query.strip():
@@ -1103,6 +1168,11 @@ def ask_repository(
     Gemini
         ↓
     Grounded answer
+
+    NOTE:
+    The RAG pipeline still uses the existing semantic
+    SearchService. Hybrid retrieval will be connected
+    in the next phase.
     """
 
     if not request.question.strip():

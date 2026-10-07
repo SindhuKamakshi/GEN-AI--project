@@ -20,6 +20,9 @@ htmlcov/
 # Generated vector database
 data/chroma_db/
 
+# Generated keyword search database
+data/keyword_index.db
+
 # Uploaded repositories / generated repository data
 data/repositories/
 
@@ -48,3 +51,6 @@ Thumbs.db
 *.egg-info/
 dist/
 build/
+
+# Generated keyword search database
+data/keyword_index.db
