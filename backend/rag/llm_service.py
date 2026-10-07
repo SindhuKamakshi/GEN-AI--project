@@ -1,6 +1,5 @@
-from google import genai
-from google.genai import types
 from dotenv import load_dotenv
+from langchain_google_genai import ChatGoogleGenerativeAI
 import os
 import time
 
@@ -10,7 +9,7 @@ load_dotenv()
 
 class LLMService:
     """
-    Handles Gemini generation for CodeLens AI.
+    Handles Gemini generation for CodeLens AI using LangChain.
 
     The model is instructed to answer only from repository
     evidence and to distinguish actual implementation/evidence
@@ -38,17 +37,24 @@ class LLMService:
                 "GEMINI_API_KEY is not configured."
             )
 
-        self.client = genai.Client(
-            api_key=api_key
-        )
-
         self.models = [
             self.PRIMARY_MODEL,
             self.FALLBACK_MODEL,
         ]
 
+        self.llms = {}
+
+        for model_name in self.models:
+            self.llms[model_name] = ChatGoogleGenerativeAI(
+                model=model_name,
+                google_api_key=api_key,
+                temperature=self.TEMPERATURE,
+                max_retries=0,
+            )
+
         print(
-            "LLM service initialized successfully."
+            "LLM service initialized successfully "
+            "using LangChain."
         )
 
     # =========================================================
@@ -179,7 +185,7 @@ Do not add outside knowledge to the fallback case.
         context: str,
     ) -> dict:
         """
-        Generate a grounded answer using Gemini.
+        Generate a grounded answer using Gemini through LangChain.
 
         Returns:
 
@@ -208,34 +214,27 @@ Do not add outside knowledge to the fallback case.
         last_error = None
 
         # -----------------------------------------------------
-        # Try Gemini models
+        # Try Gemini models through LangChain
         # -----------------------------------------------------
 
         for model_name in self.models:
+
+            llm = self.llms[model_name]
 
             for attempt in range(
                 self.MAX_RETRIES_PER_MODEL
             ):
 
                 try:
-
                     print(
-                        f"Trying Gemini model: "
+                        f"Trying Gemini model through LangChain: "
                         f"{model_name} "
                         f"(attempt "
                         f"{attempt + 1}/"
                         f"{self.MAX_RETRIES_PER_MODEL})"
                     )
 
-                    response = (
-                        self.client.models.generate_content(
-                            model=model_name,
-                            contents=prompt,
-                            config=types.GenerateContentConfig(
-                                temperature=self.TEMPERATURE
-                            ),
-                        )
-                    )
+                    response = llm.invoke(prompt)
 
                     if response is None:
                         raise RuntimeError(
@@ -243,21 +242,39 @@ Do not add outside knowledge to the fallback case.
                         )
 
                     answer = getattr(
-                        response,
-                        "text",
-                        None,
-                    )
+    response,
+    "content",
+    None,
+)
 
-                    if not answer or not answer.strip():
+                    if isinstance(answer, list):
+                        text_parts = []
+
+                        for item in answer:
+                            if isinstance(item, str):
+                                text_parts.append(item)
+
+                            elif isinstance(item, dict):
+                                text = item.get("text")
+
+                                if text:
+                                    text_parts.append(str(text))
+
+                        answer = "\n".join(text_parts)
+
+                    elif isinstance(answer, dict):
+                          answer = answer.get("text", "")
+
+                    if not answer or not str(answer).strip():
                         raise RuntimeError(
-                            "Gemini returned empty text."
-                        )
+        "Gemini returned empty text."
+    )
 
-                    answer = answer.strip()
+                    answer = str(answer).strip()
 
                     print(
                         f"Gemini generation successful "
-                        f"using {model_name}"
+                        f"using LangChain + {model_name}"
                     )
 
                     return {
@@ -271,7 +288,7 @@ Do not add outside knowledge to the fallback case.
 
                     print(
                         f"Gemini model {model_name} "
-                        f"failed: {error}"
+                        f"failed through LangChain: {error}"
                     )
 
                     if (
