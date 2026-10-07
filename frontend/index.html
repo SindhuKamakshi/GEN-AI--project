@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <meta
+        name="description"
+        content="CodeLens AI — Understand your codebase with natural-language questions."
+    >
+
+    <title>CodeLens AI — Understand Your Codebase</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
+        rel="stylesheet"
+    >
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Application styles -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+
+    <!-- =========================================================
+         APP SHELL
+    ========================================================== -->
+
+    <div class="app-shell">
+
+        <!-- Mobile overlay -->
+        <div
+            class="sidebar-overlay"
+            id="sidebarOverlay"
+            aria-hidden="true"
+        ></div>
+
+
+        <!-- =====================================================
+             SIDEBAR
+        ====================================================== -->
+
+        <aside
+            class="sidebar"
+            id="sidebar"
+            aria-label="Repository navigation"
+        >
+
+            <div class="sidebar-top">
+
+                <!-- Brand -->
+                <a
+                    href="#"
+                    class="brand"
+                    aria-label="CodeLens AI home"
+                >
+                    <span class="brand-mark">
+                        <i data-lucide="scan-search"></i>
+                    </span>
+
+                    <span class="brand-name">
+                        CodeLens
+                        <span>AI</span>
+                    </span>
+                </a>
+
+
+                <!-- New project -->
+                <button
+                    class="new-project-btn"
+                    id="newProjectButton"
+                    type="button"
+                >
+                    <i data-lucide="plus"></i>
+                    <span>New repository</span>
+                </button>
+
+
+                <!-- Repository section -->
+                <div class="sidebar-section">
+
+                    <div class="section-heading">
+                        <span>Current repository</span>
+
+                        <button
+                            class="icon-button small"
+                            type="button"
+                            aria-label="Repository options"
+                        >
+                            <i data-lucide="more-horizontal"></i>
+                        </button>
+                    </div>
+
+
+                    <button
+                        class="repository-card active"
+                        id="currentRepositoryCard"
+                        type="button"
+                    >
+                        <span class="repository-icon">
+                            <i data-lucide="box"></i>
+                        </span>
+
+                        <span class="repository-info">
+                            <strong id="currentRepositoryName">Library System</strong>
+                            <small id="currentRepositoryFileCount">7 files · Python</small>
+                        </span>
+
+                        <i
+                            class="repository-chevron"
+                            data-lucide="chevron-right"
+                        ></i>
+                    </button>
+
+                </div>
+
+
+                <!-- History -->
+                <div class="sidebar-section history-section">
+                    <div class="section-heading">
+                        <span>History</span>
+
+                        <button
+                            class="icon-button small"
+                            id="clearHistoryButton"
+                            type="button"
+                            aria-label="Clear history"
+                            title="Clear history"
+                        >
+                            <i data-lucide="trash-2"></i>
+                        </button>
+                    </div>
+
+                    <div
+                        class="history-list"
+                        id="historyList"
+                        aria-label="Repository and conversation history"
+                    >
+                        <button
+                            class="history-item"
+                            type="button"
+                            data-history-type="repository"
+                            data-repository-id="58a04eeae0ed"
+                        >
+                            <span class="history-icon repository-history-icon">
+                                <i data-lucide="box"></i>
+                            </span>
+
+                            <span class="history-info">
+                                <strong>RAG Demo</strong>
+                                <small>Repository</small>
+                            </span>
+
+                            <i
+                                class="history-arrow"
+                                data-lucide="chevron-right"
+                            ></i>
+                        </button>
+
+                        <button
+                            class="history-item"
+                            type="button"
+                            data-history-type="conversation"
+                            data-repository-id="58a04eeae0ed"
+                            data-conversation-id="demo-rag-pipeline"
+                        >
+                            <span class="history-icon conversation-history-icon">
+                                <i data-lucide="message-square"></i>
+                            </span>
+
+                            <span class="history-info">
+                                <strong>How does the RAG pipeline work?</strong>
+                                <small>RAG Demo · Conversation</small>
+                            </span>
+
+                            <i
+                                class="history-arrow"
+                                data-lucide="chevron-right"
+                            ></i>
+                        </button>
+                    </div>
+
+                    <p class="history-empty" id="historyEmpty" hidden>
+                        No previous repositories or conversations yet.
+                    </p>
+                </div>
+
+
+                <!-- Files -->
+                <div class="sidebar-section files-section">
+
+                    <div class="section-heading">
+                        <span>Files</span>
+
+                        <span class="file-count" id="fileCount">7</span>
+                    </div>
+
+
+                    <div
+                        class="file-tree"
+                        id="repositoryFileTree"
+                        aria-label="Repository files"
+                    >
+
+                        <!-- backend -->
+                        <button
+                            class="tree-folder"
+                            type="button"
+                            data-folder="backend"
+                        >
+                            <i data-lucide="chevron-down"></i>
+                            <i data-lucide="folder"></i>
+                            <span>backend</span>
+                        </button>
+
+                        <div
+                            class="tree-children"
+                            id="backend"
+                        >
+
+                            <button class="tree-file" type="button">
+                                <i data-lucide="file-code-2"></i>
+                                <span>app.py</span>
+                            </button>
+
+                            <button class="tree-file" type="button">
+                                <i data-lucide="file-code-2"></i>
+                                <span>auth.py</span>
+                            </button>
+
+                            <button class="tree-file" type="button">
+                                <i data-lucide="file-code-2"></i>
+                                <span>database.py</span>
+                            </button>
+
+                            <button class="tree-file" type="button">
+                                <i data-lucide="file-code-2"></i>
+                                <span>routes.py</span>
+                            </button>
+
+                        </div>
+
+
+                        <!-- frontend -->
+                        <button
+                            class="tree-folder"
+                            type="button"
+                            data-folder="frontend"
+                        >
+                            <i data-lucide="chevron-right"></i>
+                            <i data-lucide="folder"></i>
+                            <span>frontend</span>
+                        </button>
+
+                        <div
+                            class="tree-children collapsed"
+                            id="frontend"
+                        >
+
+                            <button class="tree-file" type="button">
+                                <i data-lucide="file-code-2"></i>
+                                <span>App.jsx</span>
+                            </button>
+
+                            <button class="tree-file" type="button">
+                                <i data-lucide="file-code-2"></i>
+                                <span>Login.jsx</span>
+                            </button>
+
+                        </div>
+
+
+                        <button class="tree-file root-file" type="button">
+                            <i data-lucide="file-text"></i>
+                            <span>README.md</span>
+                        </button>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <!-- Sidebar bottom -->
+            <div class="sidebar-bottom">
+
+                <button
+                    class="sidebar-link"
+                    type="button"
+                >
+                    <i data-lucide="book-open"></i>
+                    <span>Documentation</span>
+                </button>
+
+                <button
+                    class="sidebar-link"
+                    type="button"
+                >
+                    <i data-lucide="settings"></i>
+                    <span>Settings</span>
+                </button>
+
+                <div class="user-card">
+
+                    <div class="avatar">
+                        S
+                    </div>
+
+                    <div class="user-details">
+                        <strong>Workspace</strong>
+                        <span>Personal project</span>
+                    </div>
+
+                    <button
+                        class="icon-button small"
+                        type="button"
+                        aria-label="Account menu"
+                    >
+                        <i data-lucide="chevron-up"></i>
+                    </button>
+
+                </div>
+
+            </div>
+
+        </aside>
+
+
+        <!-- =====================================================
+             MAIN AREA
+        ====================================================== -->
+
+        <main class="main-content">
+
+            <!-- Top bar -->
+            <header class="topbar">
+
+                <div class="topbar-left">
+
+                    <button
+                        class="mobile-menu-button"
+                        id="mobileMenuButton"
+                        type="button"
+                        aria-label="Open navigation"
+                        aria-controls="sidebar"
+                        aria-expanded="false"
+                    >
+                        <i data-lucide="menu"></i>
+                    </button>
+
+
+                    <div class="breadcrumb">
+
+                        <span class="breadcrumb-muted">
+                            Repositories
+                        </span>
+
+                        <i data-lucide="chevron-right"></i>
+
+                        <span id="breadcrumbRepositoryName">
+                            Library System
+                        </span>
+
+                    </div>
+
+                </div>
+
+
+                <div class="topbar-actions">
+
+                    <div class="connection-status">
+                        <span class="status-dot"></span>
+                        Ready
+                    </div>
+
+                    <button
+                        class="icon-button"
+                        type="button"
+                        aria-label="Search"
+                    >
+                        <i data-lucide="search"></i>
+                    </button>
+
+                    <button
+                        class="icon-button"
+                        type="button"
+                        aria-label="Notifications"
+                    >
+                        <i data-lucide="bell"></i>
+                    </button>
+
+                    <button
+                        class="topbar-avatar"
+                        type="button"
+                        aria-label="Open account menu"
+                    >
+                        S
+                    </button>
+
+                </div>
+
+            </header>
+
+
+            <!-- =================================================
+                 CONTENT
+            ================================================== -->
+
+            <section class="workspace">
+
+                <!-- Welcome / Hero -->
+                <div class="hero-section reveal">
+
+                    <div class="hero-copy">
+
+                        <div class="eyebrow">
+                            <span class="eyebrow-icon">
+                                <i data-lucide="sparkles"></i>
+                            </span>
+
+                            AI-powered code understanding
+                        </div>
+
+                        <h1>
+                            Understand your
+                            <span class="gradient-text">
+                                codebase.
+                            </span>
+                        </h1>
+
+                        <p>
+                            Ask questions about your repository in
+                            plain language. Explore how your code works,
+                            trace functionality across files, and get
+                            explanations grounded in your project.
+                        </p>
+
+                    </div>
+
+
+                    <!-- Repository status -->
+                    <div class="hero-repository">
+
+                        <div class="repo-status-icon">
+                            <i data-lucide="check"></i>
+                        </div>
+
+                        <div>
+                            <span id="repositoryStatusText">Repository ready</span>
+                            <strong id="heroRepositoryName">Library System</strong>
+                        </div>
+
+                        <div class="repo-stat">
+                            <strong id="heroRepositoryFileCount">7</strong>
+                            <span>files</span>
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <!-- =================================================
+                     QUICK QUESTIONS
+                ================================================== -->
+
+                <div class="quick-section reveal">
+
+                    <div class="section-label">
+                        <span>Start exploring</span>
+                    </div>
+
+                    <div class="suggestion-grid">
+
+                        <button
+                            class="suggestion-card"
+                            type="button"
+                            data-question="How does authentication work in this project?"
+                        >
+                            <span class="suggestion-icon purple">
+                                <i data-lucide="shield-check"></i>
+                            </span>
+
+                            <span>
+                                <strong>Understand authentication</strong>
+                                <small>
+                                    Trace the login flow across files
+                                </small>
+                            </span>
+
+                            <i
+                                class="suggestion-arrow"
+                                data-lucide="arrow-up-right"
+                            ></i>
+                        </button>
+
+
+                        <button
+                            class="suggestion-card"
+                            type="button"
+                            data-question="How does the application connect to the database?"
+                        >
+                            <span class="suggestion-icon blue">
+                                <i data-lucide="database"></i>
+                            </span>
+
+                            <span>
+                                <strong>Explore data flow</strong>
+                                <small>
+                                    See how data moves through the app
+                                </small>
+                            </span>
+
+                            <i
+                                class="suggestion-arrow"
+                                data-lucide="arrow-up-right"
+                            ></i>
+                        </button>
+
+
+                        <button
+                            class="suggestion-card"
+                            type="button"
+                            data-question="Explain the overall architecture of this repository."
+                        >
+                            <span class="suggestion-icon green">
+                                <i data-lucide="layers-3"></i>
+                            </span>
+
+                            <span>
+                                <strong>Explain the architecture</strong>
+                                <small>
+                                    Get a high-level view of the project
+                                </small>
+                            </span>
+
+                            <i
+                                class="suggestion-arrow"
+                                data-lucide="arrow-up-right"
+                            ></i>
+                        </button>
+
+                    </div>
+
+                </div>
+
+
+                <!-- =================================================
+                     CHAT
+                ================================================== -->
+
+                <!-- History context -->
+                <section class="history-context reveal" id="historyContext" hidden>
+                    <div class="history-context-icon">
+                        <i data-lucide="history"></i>
+                    </div>
+                    <div>
+                        <span class="section-kicker">CONVERSATION HISTORY</span>
+                        <strong id="historyContextTitle">Previous conversation</strong>
+                        <small id="historyContextRepository">RAG Demo</small>
+                    </div>
+                    <button
+                        class="icon-button small"
+                        id="closeHistoryContext"
+                        type="button"
+                        aria-label="Close history context"
+                    >
+                        <i data-lucide="x"></i>
+                    </button>
+                </section>
+
+
+                <section class="chat-panel reveal">
+
+                    <div class="chat-header">
+
+                        <div class="chat-title">
+
+                            <span class="ai-orb">
+                                <i data-lucide="scan-search"></i>
+                            </span>
+
+                            <div>
+                                <strong>CodeLens Assistant</strong>
+                                <span>
+                                    Ask anything about your repository
+                                </span>
+                            </div>
+
+                        </div>
+
+
+                        <button
+                            class="clear-chat"
+                            id="clearChat"
+                            type="button"
+                        >
+                            <i data-lucide="rotate-ccw"></i>
+                            New conversation
+                        </button>
+
+                    </div>
+
+
+                    <!-- Chat messages -->
+                    <div
+                        class="chat-messages"
+                        id="chatMessages"
+                        aria-live="polite"
+                    >
+
+                        <!-- Initial AI message -->
+                        <article class="message assistant-message">
+
+                            <div class="message-avatar">
+                                <i data-lucide="scan-search"></i>
+                            </div>
+
+                            <div class="message-body">
+
+                                <div class="message-meta">
+                                    <strong>CodeLens</strong>
+                                    <span>Just now</span>
+                                </div>
+
+                                <div class="message-content">
+
+                                    <p>
+                                        Your repository is ready. I can help
+                                        you understand how the code works,
+                                        explain functions, trace behavior
+                                        across files, and answer questions
+                                        about the project.
+                                    </p>
+
+                                    <p>
+                                        Try asking:
+                                        <strong>
+                                            “How does authentication work?”
+                                        </strong>
+                                    </p>
+
+                                </div>
+
+                            </div>
+
+                        </article>
+
+                    </div>
+
+
+                    <!-- Composer -->
+                    <div class="composer-area">
+
+                        <form
+                            class="composer"
+                            id="chatForm"
+                        >
+
+                            <textarea
+                                id="questionInput"
+                                rows="1"
+                                maxlength="1000"
+                                placeholder="Ask about your codebase..."
+                                aria-label="Ask a question about your repository"
+                            ></textarea>
+
+
+                            <div class="composer-bottom">
+
+                                <div class="composer-hints">
+
+                                    <span>
+                                        <i data-lucide="command"></i>
+                                        Enter to ask
+                                    </span>
+
+                                    <span class="hint-divider"></span>
+
+                                    <span>
+                                        Grounded in your repository
+                                    </span>
+
+                                </div>
+
+
+                                <button
+                                    class="send-button"
+                                    id="sendButton"
+                                    type="submit"
+                                    aria-label="Send question"
+                                >
+                                    <i data-lucide="arrow-up"></i>
+                                </button>
+
+                            </div>
+
+                        </form>
+
+                        <p class="composer-disclaimer">
+                            CodeLens answers using the available repository
+                            context and provides relevant source references.
+                        </p>
+
+                    </div>
+
+                </section>
+
+
+                <!-- =================================================
+                     SOURCE EXAMPLE
+                ================================================== -->
+
+                <section
+                    class="sources-section reveal"
+                    id="sourcesSection"
+                >
+
+                    <div class="sources-header">
+
+                        <div>
+                            <span class="section-kicker">
+                                REPOSITORY CONTEXT
+                            </span>
+
+                            <h2>
+                                Explore your code with confidence.
+                            </h2>
+                        </div>
+
+                        <span class="source-count" id="sourceCount">
+                            3 relevant files
+                        </span>
+
+                    </div>
+
+
+                    <div class="source-grid" id="sourceGrid">
+
+                        <article class="source-card">
+
+                            <div class="source-top">
+
+                                <div class="source-file-icon python">
+                                    <i data-lucide="file-code-2"></i>
+                                </div>
+
+                                <div class="source-file">
+                                    <strong>auth.py</strong>
+                                    <span>Authentication</span>
+                                </div>
+
+                                <button
+                                    class="source-open"
+                                    type="button"
+                                    aria-label="Open auth.py"
+                                >
+                                    <i data-lucide="external-link"></i>
+                                </button>
+
+                            </div>
+
+                            <div class="source-lines">
+                                Lines 20–45
+                            </div>
+
+                            <div class="code-preview">
+                                <span class="code-keyword">def</span>
+                                <span class="code-function">
+                                    authenticate_user
+                                </span>
+                                <span>(username, password):</span>
+                                <br>
+                                &nbsp;&nbsp;&nbsp;&nbsp;
+                                <span class="code-keyword">user</span>
+                                =
+                                <span class="code-function">
+                                    find_user
+                                </span>
+                                (username)
+                            </div>
+
+                        </article>
+
+
+                        <article class="source-card">
+
+                            <div class="source-top">
+
+                                <div class="source-file-icon python">
+                                    <i data-lucide="file-code-2"></i>
+                                </div>
+
+                                <div class="source-file">
+                                    <strong>routes.py</strong>
+                                    <span>Application routes</span>
+                                </div>
+
+                                <button
+                                    class="source-open"
+                                    type="button"
+                                    aria-label="Open routes.py"
+                                >
+                                    <i data-lucide="external-link"></i>
+                                </button>
+
+                            </div>
+
+                            <div class="source-lines">
+                                Lines 12–30
+                            </div>
+
+                            <div class="code-preview">
+                                <span class="code-decorator">@app</span>
+                                <span>.</span>
+                                <span class="code-function">
+                                    post
+                                </span>
+                                (<span class="code-string">
+                                    "/login"
+                                </span>)
+                                <br>
+                                <span class="code-keyword">
+                                    def
+                                </span>
+                                login(request):
+                            </div>
+
+                        </article>
+
+
+                        <article class="source-card">
+
+                            <div class="source-top">
+
+                                <div class="source-file-icon database">
+                                    <i data-lucide="database"></i>
+                                </div>
+
+                                <div class="source-file">
+                                    <strong>database.py</strong>
+                                    <span>Data access</span>
+                                </div>
+
+                                <button
+                                    class="source-open"
+                                    type="button"
+                                    aria-label="Open database.py"
+                                >
+                                    <i data-lucide="external-link"></i>
+                                </button>
+
+                            </div>
+
+                            <div class="source-lines">
+                                Lines 8–32
+                            </div>
+
+                            <div class="code-preview">
+                                <span class="code-keyword">
+                                    class
+                                </span>
+                                <span class="code-function">
+                                    Database
+                                </span>:
+                                <br>
+                                &nbsp;&nbsp;&nbsp;&nbsp;
+                                <span class="code-keyword">
+                                    def
+                                </span>
+                                connect(self):
+                            </div>
+
+                        </article>
+
+                    </div>
+
+                </section>
+
+            </section>
+
+
+            <!-- Footer -->
+            <footer class="app-footer">
+
+                <span>
+                    CodeLens AI
+                </span>
+
+                <span class="footer-dot">•</span>
+
+                <span>
+                    Understand your code. Faster.
+                </span>
+
+                <div class="footer-right">
+
+                    <span>
+                        <span class="status-dot"></span>
+                        All systems ready
+                    </span>
+
+                </div>
+
+            </footer>
+
+        </main>
+
+    </div>
+
+
+    <!-- =========================================================
+         UPLOAD MODAL
+    ========================================================== -->
+
+    <div
+        class="modal-backdrop"
+        id="uploadModal"
+        aria-hidden="true"
+    >
+
+        <div
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="uploadModalTitle"
+        >
+
+            <button
+                class="modal-close"
+                id="closeModal"
+                type="button"
+                aria-label="Close upload dialog"
+            >
+                <i data-lucide="x"></i>
+            </button>
+
+
+            <div class="modal-icon">
+                <i data-lucide="upload-cloud"></i>
+            </div>
+
+            <h2 id="uploadModalTitle">
+                Add a repository
+            </h2>
+
+            <p>
+                Upload a ZIP archive of your project and start exploring
+                it with natural-language questions.
+            </p>
+
+
+            <label
+                class="upload-zone"
+                for="repositoryFile"
+                id="uploadZone"
+            >
+
+                <input
+                    type="file"
+                    id="repositoryFile"
+                    accept=".zip"
+                    hidden
+                >
+
+                <span class="upload-zone-icon">
+                    <i data-lucide="folder-up"></i>
+                </span>
+
+                <strong>
+                    Drop your ZIP here
+                </strong>
+
+                <span>
+                    or click to browse
+                </span>
+
+                <small>
+                    ZIP archives only
+                </small>
+
+            </label>
+
+
+            <div
+                class="selected-file"
+                id="selectedFile"
+                hidden
+            >
+                <i data-lucide="file-archive"></i>
+
+                <div>
+                    <strong id="selectedFileName">
+                        repository.zip
+                    </strong>
+
+                    <span id="selectedFileSize">
+                        0 MB
+                    </span>
+                </div>
+
+                <button
+                    type="button"
+                    id="removeSelectedFile"
+                    aria-label="Remove selected file"
+                >
+                    <i data-lucide="x"></i>
+                </button>
+            </div>
+
+
+            <button
+                class="primary-button full-width"
+                id="analyzeRepository"
+                type="button"
+                disabled
+            >
+                <i data-lucide="scan-search"></i>
+                Analyze repository
+            </button>
+
+        </div>
+
+    </div>
+
+
+    <!-- =========================================================
+         TOAST
+    ========================================================== -->
+
+    <div
+        class="toast"
+        id="toast"
+        role="status"
+        aria-live="polite"
+    >
+        <span class="toast-icon">
+            <i data-lucide="check"></i>
+        </span>
+
+        <span id="toastMessage">
+            Done
+        </span>
+    </div>
+
+
+    <!-- Application JavaScript -->
+    <script src="script.js"></script>
+
+</body>
+</html>
