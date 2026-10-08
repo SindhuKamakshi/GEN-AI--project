@@ -11,6 +11,7 @@ class DependencyAnalyzer:
 
     Detects:
 
+    File-level:
     - Internal file dependencies
     - Reverse dependencies
     - External library dependencies
@@ -19,6 +20,15 @@ class DependencyAnalyzer:
     - Dependency graph
     - Direct dependency relationships
     - Basic transitive dependency information
+
+    Entity-level:
+    - Function definitions
+    - Class definitions
+    - Function calls
+    - Class references
+    - Entity dependencies
+    - Reverse entity dependencies
+    - Entity dependency graph
 
     Repository code is never executed.
     """
@@ -91,9 +101,9 @@ class DependencyAnalyzer:
             REPOSITORIES_DIR / repository_id
         )
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Repository validation
-    # ---------------------------------------------------------
+    # =========================================================
 
     def _validate_repository(self):
         if not self.repository_path.exists():
@@ -107,9 +117,9 @@ class DependencyAnalyzer:
                 f"{self.repository_path}"
             )
 
-    # ---------------------------------------------------------
+    # =========================================================
     # File discovery
-    # ---------------------------------------------------------
+    # =========================================================
 
     def _iter_python_files(self):
         for path in self.repository_path.rglob("*.py"):
@@ -126,9 +136,9 @@ class DependencyAnalyzer:
 
             yield path
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Path / module helpers
-    # ---------------------------------------------------------
+    # =========================================================
 
     def _relative_path(self, path):
         return str(
@@ -154,7 +164,6 @@ class DependencyAnalyzer:
         """
 
         path = Path(relative_path)
-
         parts = list(path.parts)
 
         if not parts:
@@ -162,11 +171,8 @@ class DependencyAnalyzer:
 
         if parts[-1] == "__init__.py":
             parts = parts[:-1]
-
         else:
-            parts[-1] = Path(
-                parts[-1]
-            ).stem
+            parts[-1] = Path(parts[-1]).stem
 
         return ".".join(parts)
 
@@ -174,9 +180,9 @@ class DependencyAnalyzer:
     def _top_level_module(import_name):
         return import_name.split(".")[0]
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Import extraction
-    # ---------------------------------------------------------
+    # =========================================================
 
     @staticmethod
     def _extract_imports(tree):
@@ -192,18 +198,126 @@ class DependencyAnalyzer:
             elif isinstance(node, ast.ImportFrom):
 
                 if node.module:
+                    imports.append(node.module)
 
-                    imports.append(
-                        node.module
+        return sorted(set(imports))
+
+    # =========================================================
+    # Entity helpers
+    # =========================================================
+
+    @staticmethod
+    def _get_entity_name(node):
+        """
+        Return the name of a function or class.
+        """
+
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return node.name
+
+        if isinstance(node, ast.ClassDef):
+            return node.name
+
+        return None
+
+    @staticmethod
+    def _get_node_type(node):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return "function"
+
+        if isinstance(node, ast.ClassDef):
+            return "class"
+
+        return "unknown"
+
+    @staticmethod
+    def _get_line_range(node):
+        start_line = getattr(node, "lineno", None)
+        end_line = getattr(node, "end_lineno", None)
+
+        return start_line, end_line
+
+    # =========================================================
+    # Entity extraction
+    # =========================================================
+
+    def _extract_entities(
+        self,
+        tree,
+        relative_path,
+    ):
+        """
+        Extract top-level and nested functions/classes.
+
+        Each entity contains:
+
+            file
+            name
+            type
+            start_line
+            end_line
+            qualified_name
+        """
+
+        entities = []
+
+        def visit_node(node, parent_name=None):
+
+            if isinstance(
+                node,
+                (
+                    ast.FunctionDef,
+                    ast.AsyncFunctionDef,
+                    ast.ClassDef,
+                ),
+            ):
+
+                entity_name = node.name
+
+                if parent_name:
+                    qualified_name = (
+                        f"{parent_name}.{entity_name}"
+                    )
+                else:
+                    qualified_name = entity_name
+
+                start_line, end_line = (
+                    self._get_line_range(node)
+                )
+
+                entities.append(
+                    {
+                        "file": relative_path,
+                        "name": entity_name,
+                        "type": self._get_node_type(node),
+                        "start_line": start_line,
+                        "end_line": end_line,
+                        "qualified_name": qualified_name,
+                    }
+                )
+
+                # Continue into nested entities.
+                for child in ast.iter_child_nodes(node):
+                    visit_node(
+                        child,
+                        qualified_name,
                     )
 
-        return sorted(
-            set(imports)
-        )
+                return
 
-    # ---------------------------------------------------------
+            for child in ast.iter_child_nodes(node):
+                visit_node(
+                    child,
+                    parent_name,
+                )
+
+        visit_node(tree)
+
+        return entities
+
+    # =========================================================
     # Python file parsing
-    # ---------------------------------------------------------
+    # =========================================================
 
     def _parse_files(self):
 
@@ -212,9 +326,7 @@ class DependencyAnalyzer:
 
         for path in self._iter_python_files():
 
-            relative_path = self._relative_path(
-                path
-            )
+            relative_path = self._relative_path(path)
 
             module = self._module_name(
                 relative_path
@@ -229,8 +341,11 @@ class DependencyAnalyzer:
 
                 tree = ast.parse(source)
 
-                imports = self._extract_imports(
-                    tree
+                imports = self._extract_imports(tree)
+
+                entities = self._extract_entities(
+                    tree,
+                    relative_path,
                 )
 
                 files.append(
@@ -238,6 +353,8 @@ class DependencyAnalyzer:
                         "path": relative_path,
                         "module": module,
                         "imports": imports,
+                        "entities": entities,
+                        "tree": tree,
                     }
                 )
 
@@ -259,14 +376,16 @@ class DependencyAnalyzer:
                         "path": relative_path,
                         "module": module,
                         "imports": [],
+                        "entities": [],
+                        "tree": None,
                     }
                 )
 
         return files, failed_files
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Internal module mapping
-    # ---------------------------------------------------------
+    # =========================================================
 
     def _build_module_map(self, files):
 
@@ -277,52 +396,30 @@ class DependencyAnalyzer:
             module = file_info["module"]
 
             if module:
-                module_map[
-                    module
-                ] = file_info["path"]
+                module_map[module] = file_info["path"]
 
         return module_map
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Internal dependency detection
-    # ---------------------------------------------------------
+    # =========================================================
 
     def _find_internal_target(
         self,
         imported_module,
         module_map,
     ):
-        """
-        Resolve an import to a repository file.
 
-        Example:
-
-            import rag
-            from rag import answer_question
-
-        both resolve to:
-
-            rag.py
-        """
-
-        # Exact match.
         if imported_module in module_map:
+            return module_map[imported_module]
 
-            return module_map[
-                imported_module
-            ]
-
-        # Match parent module.
         for module_name, file_path in module_map.items():
 
-            if (
-                imported_module.startswith(
-                    module_name + "."
-                )
+            if imported_module.startswith(
+                module_name + "."
             ):
                 return file_path
 
-        # Match package import.
         for module_name, file_path in module_map.items():
 
             if module_name.startswith(
@@ -344,9 +441,7 @@ class DependencyAnalyzer:
 
             source_file = file_info["path"]
 
-            for imported_module in file_info[
-                "imports"
-            ]:
+            for imported_module in file_info["imports"]:
 
                 target_file = (
                     self._find_internal_target(
@@ -370,7 +465,6 @@ class DependencyAnalyzer:
                     }
                 )
 
-        # Remove duplicates.
         unique = {}
 
         for dependency in dependencies:
@@ -383,13 +477,11 @@ class DependencyAnalyzer:
 
             unique[key] = dependency
 
-        return list(
-            unique.values()
-        )
+        return list(unique.values())
 
-    # ---------------------------------------------------------
+    # =========================================================
     # External dependency detection
-    # ---------------------------------------------------------
+    # =========================================================
 
     def _build_external_dependencies(
         self,
@@ -408,9 +500,7 @@ class DependencyAnalyzer:
 
             source_file = file_info["path"]
 
-            for imported_module in file_info[
-                "imports"
-            ]:
+            for imported_module in file_info["imports"]:
 
                 top_level = (
                     self._top_level_module(
@@ -418,11 +508,9 @@ class DependencyAnalyzer:
                     )
                 )
 
-                # Python standard library.
                 if top_level in self.STANDARD_LIBRARY:
                     continue
 
-                # Internal repository module.
                 if top_level in internal_top_levels:
                     continue
 
@@ -436,9 +524,9 @@ class DependencyAnalyzer:
             in external_by_file.items()
         }
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Reverse dependency graph
-    # ---------------------------------------------------------
+    # =========================================================
 
     def _build_reverse_dependencies(
         self,
@@ -455,9 +543,7 @@ class DependencyAnalyzer:
             reverse[target].append(
                 {
                     "file": source,
-                    "import": dependency[
-                        "import"
-                    ],
+                    "import": dependency["import"],
                     "relationship": "depended_on_by",
                 }
             )
@@ -471,9 +557,9 @@ class DependencyAnalyzer:
             in reverse.items()
         }
 
-    # ---------------------------------------------------------
-    # Direct dependency information
-    # ---------------------------------------------------------
+    # =========================================================
+    # Direct file dependency information
+    # =========================================================
 
     def _build_file_dependency_summary(
         self,
@@ -490,13 +576,8 @@ class DependencyAnalyzer:
             source = dependency["from"]
             target = dependency["to"]
 
-            depends_on[source].append(
-                target
-            )
-
-            depended_on_by[target].append(
-                source
-            )
+            depends_on[source].append(target)
+            depended_on_by[target].append(source)
 
         summaries = []
 
@@ -507,9 +588,7 @@ class DependencyAnalyzer:
             summaries.append(
                 {
                     "file": path,
-                    "module": file_info[
-                        "module"
-                    ],
+                    "module": file_info["module"],
                     "internal_dependencies": sorted(
                         set(
                             depends_on.get(
@@ -553,9 +632,9 @@ class DependencyAnalyzer:
 
         return summaries
 
-    # ---------------------------------------------------------
-    # Most depended-on files
-    # ---------------------------------------------------------
+    # =========================================================
+    # Dependency hotspots
+    # =========================================================
 
     def _build_dependency_hotspots(
         self,
@@ -601,9 +680,9 @@ class DependencyAnalyzer:
 
         return hotspots
 
-    # ---------------------------------------------------------
-    # Dependency graph
-    # ---------------------------------------------------------
+    # =========================================================
+    # File dependency graph
+    # =========================================================
 
     def _build_dependency_graph(
         self,
@@ -621,9 +700,7 @@ class DependencyAnalyzer:
                     "label": Path(
                         file_info["path"]
                     ).name,
-                    "module": file_info[
-                        "module"
-                    ],
+                    "module": file_info["module"],
                 }
             )
 
@@ -633,18 +710,12 @@ class DependencyAnalyzer:
 
             edges.append(
                 {
-                    "source": dependency[
-                        "from"
-                    ],
-                    "target": dependency[
-                        "to"
-                    ],
+                    "source": dependency["from"],
+                    "target": dependency["to"],
                     "relationship": dependency[
                         "relationship"
                     ],
-                    "import": dependency[
-                        "import"
-                    ],
+                    "import": dependency["import"],
                 }
             )
 
@@ -653,27 +724,15 @@ class DependencyAnalyzer:
             "edges": edges,
         }
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Transitive dependency analysis
-    # ---------------------------------------------------------
+    # =========================================================
 
     def _build_transitive_dependencies(
         self,
         files,
         internal_dependencies,
     ):
-        """
-        Find indirect dependencies.
-
-        Example:
-
-            app.py → service.py
-            service.py → database.py
-
-        Then:
-
-            app.py indirectly depends on database.py
-        """
 
         graph = defaultdict(set)
 
@@ -721,18 +780,14 @@ class DependencyAnalyzer:
                 ):
 
                     if next_file not in visited:
-                        queue.append(
-                            next_file
-                        )
+                        queue.append(next_file)
 
             direct = graph.get(
                 start_file,
                 set(),
             )
 
-            indirect = (
-                visited - direct
-            )
+            indirect = visited - direct
 
             result[start_file] = {
                 "direct_dependencies": sorted(
@@ -748,9 +803,666 @@ class DependencyAnalyzer:
 
         return result
 
-    # ---------------------------------------------------------
+    # =========================================================
+    # Entity lookup
+    # =========================================================
+
+    def _build_entity_index(self, files):
+
+        entity_index = {}
+
+        for file_info in files:
+
+            for entity in file_info.get(
+                "entities",
+                [],
+            ):
+
+                key = (
+                    entity["file"],
+                    entity["name"],
+                )
+
+                entity_index[key] = entity
+
+        return entity_index
+
+    # =========================================================
+    # Entity name lookup
+    # =========================================================
+
+    def _build_entity_name_index(self, files):
+
+        name_index = defaultdict(list)
+
+        for file_info in files:
+
+            for entity in file_info.get(
+                "entities",
+                [],
+            ):
+
+                name_index[
+                    entity["name"]
+                ].append(entity)
+
+        return name_index
+
+    # =========================================================
+    # Entity dependency extraction
+    # =========================================================
+
+    def _build_entity_dependencies(
+        self,
+        files,
+    ):
+        """
+        Detect relationships such as:
+
+            answer_question()
+                -> retrieve_context()
+
+            SomeClass
+                -> OtherClass
+
+        This is static AST analysis. It does not execute code.
+
+        Because Python is dynamically typed, this analyzer uses
+        conservative name matching rather than pretending to know
+        runtime dispatch with certainty.
+        """
+
+        entity_name_index = (
+            self._build_entity_name_index(files)
+        )
+
+        dependencies = []
+
+        for file_info in files:
+
+            tree = file_info.get("tree")
+
+            if tree is None:
+                continue
+            # -----------------------------------------
+            # Module-level entity imports
+            # -----------------------------------------
+            #
+            # Detect relationships such as:
+            #
+            #     from rag import retrieve_context
+            #
+            #     test_retrieval.py
+            #             |
+            #             | imports_entity
+            #             v
+            #     rag.py::retrieve_context
+            #
+            # These relationships originate from the
+            # module itself, so "__module__" is used
+            # as the source entity.
+            # -----------------------------------------
+
+            for import_node in ast.iter_child_nodes(tree):
+
+                if isinstance(import_node, ast.ImportFrom):
+
+                    for alias in import_node.names:
+
+                        imported_name = alias.name
+
+                        if imported_name == "*":
+                            continue
+
+                        targets = (
+                            entity_name_index.get(
+                                imported_name,
+                                [],
+                            )
+                        )
+
+                        for target in targets:
+
+                            if target["file"] == file_info["path"]:
+                                continue
+
+                            dependencies.append(
+                                {
+                                    "from_file": file_info[
+                                        "path"
+                                    ],
+                                    "from_entity": "__module__",
+                                    "from_entity_type": "module",
+                                    "to_file": target[
+                                        "file"
+                                    ],
+                                    "to_entity": target[
+                                        "name"
+                                    ],
+                                    "to_entity_type": target[
+                                        "type"
+                                    ],
+                                    "relationship": (
+                                        "imports_entity"
+                                    ),
+                                    "start_line": (
+                                        import_node.lineno
+                                    ),
+                                }
+                            )
+
+                elif isinstance(import_node, ast.Import):
+
+                    for alias in import_node.names:
+
+                        imported_root = (
+                            alias.name.split(".")[0]
+                        )
+
+                        targets = (
+                            entity_name_index.get(
+                                imported_root,
+                                [],
+                            )
+                        )
+
+                        for target in targets:
+
+                            if target["file"] == file_info["path"]:
+                                continue
+
+                            dependencies.append(
+                                {
+                                    "from_file": file_info[
+                                        "path"
+                                    ],
+                                    "from_entity": "__module__",
+                                    "from_entity_type": "module",
+                                    "to_file": target[
+                                        "file"
+                                    ],
+                                    "to_entity": target[
+                                        "name"
+                                    ],
+                                    "to_entity_type": target[
+                                        "type"
+                                    ],
+                                    "relationship": (
+                                        "imports_entity"
+                                    ),
+                                    "start_line": (
+                                        import_node.lineno
+                                    ),
+                                }
+                            )
+            entities = file_info.get(
+                "entities",
+                [],
+            )
+
+            # Map source locations to entities.
+            entity_nodes = []
+
+            def collect_nodes(node):
+
+                if isinstance(
+                    node,
+                    (
+                        ast.FunctionDef,
+                        ast.AsyncFunctionDef,
+                        ast.ClassDef,
+                    ),
+                ):
+
+                    start_line = getattr(
+                        node,
+                        "lineno",
+                        None,
+                    )
+
+                    end_line = getattr(
+                        node,
+                        "end_lineno",
+                        None,
+                    )
+
+                    matching_entity = None
+
+                    for entity in entities:
+
+                        if (
+                            entity["name"] == node.name
+                            and entity["start_line"]
+                            == start_line
+                        ):
+                            matching_entity = entity
+                            break
+
+                    if matching_entity:
+                        entity_nodes.append(
+                            (
+                                node,
+                                matching_entity,
+                            )
+                        )
+
+                for child in ast.iter_child_nodes(node):
+                    collect_nodes(child)
+
+            collect_nodes(tree)
+
+            for node, source_entity in entity_nodes:
+
+                source_name = source_entity["name"]
+                source_file = source_entity["file"]
+
+                # -----------------------------------------
+                # Function / class calls
+                # -----------------------------------------
+
+                for child in ast.walk(node):
+
+                    if isinstance(
+                        child,
+                        ast.Call,
+                    ):
+
+                        called_name = None
+
+                        if isinstance(
+                            child.func,
+                            ast.Name,
+                        ):
+                            called_name = (
+                                child.func.id
+                            )
+
+                        elif isinstance(
+                            child.func,
+                            ast.Attribute,
+                        ):
+                            called_name = (
+                                child.func.attr
+                            )
+
+                        if not called_name:
+                            continue
+
+                        targets = (
+                            entity_name_index.get(
+                                called_name,
+                                [],
+                            )
+                        )
+
+                        for target in targets:
+
+                            if (
+                                target["file"]
+                                == source_file
+                                and target["name"]
+                                == source_name
+                            ):
+                                continue
+
+                            dependencies.append(
+                                {
+                                    "from_file": source_file,
+                                    "from_entity": source_name,
+                                    "from_entity_type": (
+                                        source_entity[
+                                            "type"
+                                        ]
+                                    ),
+                                    "to_file": target[
+                                        "file"
+                                    ],
+                                    "to_entity": target[
+                                        "name"
+                                    ],
+                                    "to_entity_type": target[
+                                        "type"
+                                    ],
+                                    "relationship": (
+                                        "calls"
+                                    ),
+                                    "start_line": (
+                                        source_entity[
+                                            "start_line"
+                                        ]
+                                    ),
+                                }
+                            )
+
+                # -----------------------------------------
+                # Name references
+                # -----------------------------------------
+
+                for child in ast.walk(node):
+
+                    if not isinstance(
+                        child,
+                        ast.Name,
+                    ):
+                        continue
+
+                    referenced_name = child.id
+
+                    targets = (
+                        entity_name_index.get(
+                            referenced_name,
+                            [],
+                        )
+                    )
+
+                    for target in targets:
+
+                        if (
+                            target["file"]
+                            == source_file
+                            and target["name"]
+                            == source_name
+                        ):
+                            continue
+
+                        # Avoid treating a function call as
+                        # both "calls" and "references".
+                        parent_call = None
+
+                        for possible_call in ast.walk(node):
+
+                            if isinstance(
+                                possible_call,
+                                ast.Call,
+                            ):
+
+                                if (
+                                    isinstance(
+                                        possible_call.func,
+                                        ast.Name,
+                                    )
+                                    and possible_call.func
+                                    is child
+                                ):
+                                    parent_call = (
+                                        possible_call
+                                    )
+                                    break
+
+                        if parent_call is not None:
+                            continue
+
+                        dependencies.append(
+                            {
+                                "from_file": source_file,
+                                "from_entity": source_name,
+                                "from_entity_type": (
+                                    source_entity[
+                                        "type"
+                                    ]
+                                ),
+                                "to_file": target[
+                                    "file"
+                                ],
+                                "to_entity": target[
+                                    "name"
+                                ],
+                                "to_entity_type": target[
+                                    "type"
+                                ],
+                                "relationship": (
+                                    "references"
+                                ),
+                                "start_line": (
+                                    source_entity[
+                                        "start_line"
+                                    ]
+                                ),
+                            }
+                        )
+
+        # Remove duplicates.
+        unique = {}
+
+        for dependency in dependencies:
+
+            key = (
+                dependency["from_file"],
+                dependency["from_entity"],
+                dependency["to_file"],
+                dependency["to_entity"],
+                dependency["relationship"],
+            )
+
+            unique[key] = dependency
+
+        return list(unique.values())
+
+    # =========================================================
+    # Entity reverse dependencies
+    # =========================================================
+
+    def _build_entity_reverse_dependencies(
+        self,
+        entity_dependencies,
+    ):
+
+        reverse = defaultdict(list)
+
+        for dependency in entity_dependencies:
+
+            key = (
+                dependency["to_file"],
+                dependency["to_entity"],
+            )
+
+            reverse[key].append(
+                {
+                    "file": dependency[
+                        "from_file"
+                    ],
+                    "entity": dependency[
+                        "from_entity"
+                    ],
+                    "relationship": dependency[
+                        "relationship"
+                    ],
+                }
+            )
+
+        return {
+            f"{file}:{entity}": sorted(
+                dependents,
+                key=lambda item: (
+                    item["file"],
+                    item["entity"],
+                ),
+            )
+            for (file, entity), dependents
+            in reverse.items()
+        }
+
+    # =========================================================
+    # Entity dependency summary
+    # =========================================================
+
+    def _build_entity_dependency_summary(
+        self,
+        files,
+        entity_dependencies,
+    ):
+
+        depends_on = defaultdict(set)
+        depended_on_by = defaultdict(set)
+
+        for dependency in entity_dependencies:
+
+            source = (
+                dependency["from_file"],
+                dependency["from_entity"],
+            )
+
+            target = (
+                dependency["to_file"],
+                dependency["to_entity"],
+            )
+
+            depends_on[source].add(target)
+            depended_on_by[target].add(source)
+
+        summaries = []
+
+        for file_info in files:
+
+            for entity in file_info.get(
+                "entities",
+                [],
+            ):
+
+                key = (
+                    entity["file"],
+                    entity["name"],
+                )
+
+                direct_dependencies = sorted(
+                    [
+                        {
+                            "file": target[0],
+                            "entity": target[1],
+                        }
+                        for target in depends_on.get(
+                            key,
+                            set(),
+                        )
+                    ],
+                    key=lambda item: (
+                        item["file"],
+                        item["entity"],
+                    ),
+                )
+
+                dependents = sorted(
+                    [
+                        {
+                            "file": source[0],
+                            "entity": source[1],
+                        }
+                        for source in depended_on_by.get(
+                            key,
+                            set(),
+                        )
+                    ],
+                    key=lambda item: (
+                        item["file"],
+                        item["entity"],
+                    ),
+                )
+
+                summaries.append(
+                    {
+                        "file": entity["file"],
+                        "entity": entity["name"],
+                        "type": entity["type"],
+                        "qualified_name": entity[
+                            "qualified_name"
+                        ],
+                        "start_line": entity[
+                            "start_line"
+                        ],
+                        "end_line": entity[
+                            "end_line"
+                        ],
+                        "dependencies": (
+                            direct_dependencies
+                        ),
+                        "depended_on_by": dependents,
+                        "dependency_count": len(
+                            direct_dependencies
+                        ),
+                        "dependent_count": len(
+                            dependents
+                        ),
+                    }
+                )
+
+        return summaries
+
+    # =========================================================
+    # Entity dependency graph
+    # =========================================================
+
+    def _build_entity_dependency_graph(
+        self,
+        files,
+        entity_dependencies,
+    ):
+
+        nodes = []
+
+        for file_info in files:
+
+            for entity in file_info.get(
+                "entities",
+                [],
+            ):
+
+                entity_id = (
+                    f"{entity['file']}::"
+                    f"{entity['qualified_name']}"
+                )
+
+                nodes.append(
+                    {
+                        "id": entity_id,
+                        "file": entity["file"],
+                        "name": entity["name"],
+                        "qualified_name": (
+                            entity[
+                                "qualified_name"
+                            ]
+                        ),
+                        "type": entity["type"],
+                        "start_line": entity[
+                            "start_line"
+                        ],
+                        "end_line": entity[
+                            "end_line"
+                        ],
+                    }
+                )
+
+        edges = []
+
+        for dependency in entity_dependencies:
+
+            source_id = (
+                f"{dependency['from_file']}::"
+                f"{dependency['from_entity']}"
+            )
+
+            target_id = (
+                f"{dependency['to_file']}::"
+                f"{dependency['to_entity']}"
+            )
+
+            edges.append(
+                {
+                    "source": source_id,
+                    "target": target_id,
+                    "relationship": dependency[
+                        "relationship"
+                    ],
+                }
+            )
+
+        return {
+            "nodes": nodes,
+            "edges": edges,
+        }
+
+    # =========================================================
     # Main analysis
-    # ---------------------------------------------------------
+    # =========================================================
 
     def analyze(self):
 
@@ -761,10 +1473,12 @@ class DependencyAnalyzer:
         )
 
         module_map = (
-            self._build_module_map(
-                files
-            )
+            self._build_module_map(files)
         )
+
+        # ---------------------------------------------
+        # File-level analysis
+        # ---------------------------------------------
 
         internal_dependencies = (
             self._build_internal_dependencies(
@@ -815,6 +1529,40 @@ class DependencyAnalyzer:
             )
         )
 
+        # ---------------------------------------------
+        # Entity-level analysis
+        # ---------------------------------------------
+
+        entity_dependencies = (
+            self._build_entity_dependencies(
+                files
+            )
+        )
+
+        entity_reverse_dependencies = (
+            self._build_entity_reverse_dependencies(
+                entity_dependencies
+            )
+        )
+
+        entity_summaries = (
+            self._build_entity_dependency_summary(
+                files,
+                entity_dependencies,
+            )
+        )
+
+        entity_dependency_graph = (
+            self._build_entity_dependency_graph(
+                files,
+                entity_dependencies,
+            )
+        )
+
+        # ---------------------------------------------
+        # Counts
+        # ---------------------------------------------
+
         total_internal = len(
             internal_dependencies
         )
@@ -825,13 +1573,30 @@ class DependencyAnalyzer:
             in external_dependencies.values()
         )
 
+        total_entities = sum(
+            len(
+                file_info.get(
+                    "entities",
+                    [],
+                )
+            )
+            for file_info in files
+        )
+
+        # ---------------------------------------------
+        # Final result
+        # ---------------------------------------------
+
         return {
             "repository_id": self.repository_id,
 
+            # File-level information
             "total_python_files": len(files),
 
-            "analyzed_files": len(files)
-            - len(failed_files),
+            "analyzed_files": (
+                len(files)
+                - len(failed_files)
+            ),
 
             "failed_files": failed_files,
 
@@ -867,5 +1632,24 @@ class DependencyAnalyzer:
 
             "dependency_graph": (
                 dependency_graph
+            ),
+
+            # Entity-level information
+            "total_entities": total_entities,
+
+            "entity_dependencies": (
+                entity_dependencies
+            ),
+
+            "entity_reverse_dependencies": (
+                entity_reverse_dependencies
+            ),
+
+            "entity_dependency_summary": (
+                entity_summaries
+            ),
+
+            "entity_dependency_graph": (
+                entity_dependency_graph
             ),
         }
