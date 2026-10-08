@@ -33,9 +33,11 @@ class RAGService:
         self,
         search_service: SearchService,
         llm_service: LLMService,
+        dependency_service,
     ):
         self.search_service = search_service
         self.llm_service = llm_service
+        self.dependency_service = dependency_service
 
     # =========================================================
     # SOURCE LABEL
@@ -135,7 +137,20 @@ class RAGService:
                 "content",
                 "",
             )
+            dependency_context = result.get(
+    "dependency_context",
+    {}
+)
 
+            dependencies = dependency_context.get(
+    "dependencies",
+    []
+)
+
+            dependents = dependency_context.get(
+    "dependents",
+    []
+)
             if not content:
                 continue
 
@@ -163,7 +178,34 @@ class RAGService:
                 "chunk_type",
                 "unknown",
             )
+            dependency_lines = []
 
+            for dependency in dependencies:
+                dependency_lines.append(
+                    f"- {dependency.get('from_file')}::"
+                    f"{dependency.get('from_entity')} "
+                    f"{dependency.get('relationship')} "
+                    f"{dependency.get('to_file')}::"
+                    f"{dependency.get('to_entity')}"
+                )
+
+            for dependent in dependents:
+                dependency_lines.append(
+                    f"- {dependent.get('from_file')}::"
+                    f"{dependent.get('from_entity')} "
+                    f"{dependent.get('relationship')} "
+                    f"{dependent.get('to_file')}::"
+                    f"{dependent.get('to_entity')}"
+                )
+
+            dependency_section = ""
+
+            if dependency_lines:
+                dependency_section = (
+                    "Dependency relationships:\n"
+                    + "\n".join(dependency_lines)
+                    + "\n\n"
+                )
             source_block = (
                 f"SOURCE {index}\n"
                 f"File: {file_path}\n"
@@ -171,6 +213,7 @@ class RAGService:
                 f"Lines: {start_line}-{end_line}\n"
                 f"Chunk type: {chunk_type}\n"
                 f"\n"
+                f"{dependency_section}"
                 f"Repository content:\n"
                 f"{content}\n"
                 f"\n"
@@ -309,6 +352,7 @@ class RAGService:
         repository_id: str,
         question: str,
         top_k: int = 5,
+        repository_path = None
     ) -> dict:
         """
         Complete RAG pipeline.
@@ -338,13 +382,19 @@ class RAGService:
         # STEP 1: RETRIEVE
         # -----------------------------------------------------
 
+        search_results = self.search_service.search(
+            repository_id=repository_id,
+            query=question,
+            top_k=top_k,
+)
+
         search_results = (
-            self.search_service.search(
-                repository_id=repository_id,
-                query=question,
-                top_k=top_k,
-            )
-        )
+    self.dependency_service.expand_search_results(
+        repository_id=repository_id,
+        search_results=search_results,
+        repository_path=repository_path,
+    )
+)
 
         # -----------------------------------------------------
         # STEP 2: NO RESULTS

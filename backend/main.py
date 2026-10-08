@@ -26,6 +26,8 @@ from analysis.structure_analyzer import RepositoryStructureAnalyzer
 from analysis.api_analyzer import APIAnalyzer
 from analysis.architecture_analyzer import ArchitectureAnalyzer
 from analysis.dependency_analyzer import DependencyAnalyzer
+from analysis.dependency_service import DependencyService
+from analysis.dependency_service import DependencyService
 from analysis.impact_analyzer import ImpactAnalyzer
 from analysis.onboarding_analyzer import OnboardingAnalyzer
 
@@ -80,12 +82,13 @@ search_service = SearchService(
     keyword_store,
     reranker
 )
-
+dependency_service = DependencyService()
 llm_service = LLMService()
 
 rag_service = RAGService(
     search_service,
     llm_service,
+    dependency_service
 )
 
 print("CodeLens AI services initialized successfully.")
@@ -555,10 +558,27 @@ def get_repository_architecture(
 def analyze_dependencies(
     repository_id: str
 ):
-    analyzer = DependencyAnalyzer(repository_id)
+    repository_path = (
+        REPOSITORIES_DIR / repository_id
+    )
+
+    if not repository_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Repository not found.",
+        )
+
+    if not repository_path.is_dir():
+        raise HTTPException(
+            status_code=400,
+            detail="Repository path is invalid.",
+        )
 
     try:
-        result = analyzer.analyze()
+        result = dependency_service.analyze_repository(
+            repository_id=repository_id,
+            repository_path=repository_path,
+        )
 
         return {
             "repository_id": repository_id,
@@ -571,13 +591,17 @@ def analyze_dependencies(
             detail=str(exc),
         )
 
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        )
+
     except Exception as exc:
         raise HTTPException(
             status_code=500,
             detail=str(exc),
         )
-
-
 # ============================================================
 # FILE IMPACT
 # ============================================================
@@ -961,7 +985,36 @@ def index_repository(
                 "ChromaDB chunk count does not match "
                 "repository chunk count."
             )
+        # ====================================================
+        # STEP 5: DEPENDENCY ANALYSIS
+        # ====================================================
 
+        progress_service.update(
+    repository_id,
+    stage="dependency_analysis",
+    progress=90,
+    processed_files=total_files,
+    total_files=total_files,
+    processed_chunks=total_chunks,
+    total_chunks=total_chunks,
+    message="Analyzing repository dependencies..."
+)
+
+        dependency_analysis = dependency_service.analyze_repository(
+    repository_id=repository_id,
+    repository_path=repository_path,
+)
+
+        progress_service.update(
+    repository_id,
+    stage="dependency_analysis",
+    progress=95,
+    processed_files=total_files,
+    total_files=total_files,
+    processed_chunks=total_chunks,
+    total_chunks=total_chunks,
+    message="Dependency analysis completed."
+)
         # ----------------------------------------------------
         # Store the same chunks in SQLite FTS5.
         #
@@ -995,7 +1048,7 @@ def index_repository(
         )
 
         # ====================================================
-        # STEP 5: COMPLETED
+        # STEP 6: COMPLETED
         # ====================================================
 
         progress_service.complete(
@@ -1026,6 +1079,16 @@ def index_repository(
                 "store": "SQLite FTS5",
                 "chunks": keyword_count,
             },
+            "dependency_analysis": {
+    "files": dependency_analysis.get("total_files", 0),
+    "entities": dependency_analysis.get("total_entities", 0),
+    "dependencies": len(
+        dependency_analysis.get(
+            "entity_dependencies",
+            []
+        )
+    ),
+},
         }
 
     # ========================================================
@@ -1194,11 +1257,22 @@ def ask_repository(
 
     try:
 
+        repository_path = (
+    REPOSITORIES_DIR / repository_id
+)
+
+        if not repository_path.exists():
+            raise HTTPException(
+        status_code=404,
+        detail="Repository not found.",
+    )
+
         result = rag_service.answer_question(
-            repository_id=repository_id,
-            question=request.question,
-            top_k=request.top_k,
-        )
+    repository_id=repository_id,
+    question=request.question,
+    top_k=request.top_k,
+    repository_path=repository_path,
+)
 
         return result
 
