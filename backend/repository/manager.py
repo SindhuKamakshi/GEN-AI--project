@@ -18,141 +18,73 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 # DIRECTORY FILTERING
 # ============================================================
 
-# Directories that should not be indexed because they normally
-# contain dependencies, generated files, caches, or Git metadata.
 IGNORED_DIRECTORIES = {
-    ".git",
-    ".hg",
-    ".svn",
-
+    ".git", ".hg", ".svn",
     "node_modules",
-
-    "__pycache__",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-
-    ".venv",
-    "venv",
-    "env",
-    "virtualenv",
-
-    ".idea",
-    ".vscode",
-
-    "dist",
-    "build",
-    "out",
-    ".next",
-    ".nuxt",
-
-    "coverage",
-    ".coverage",
-
-    "target",
-
-    "vendor",
+    "__pycache__", ".pytest_cache",
+    ".mypy_cache", ".ruff_cache",
+    ".venv", "venv", "env", "virtualenv",
+    ".idea", ".vscode",
+    "dist", "build", "out",
+    ".next", ".nuxt",
+    "coverage", ".coverage",
+    "target", "vendor",
 }
 
 
 # ============================================================
-# FILE FILTERING
+# KNOWN FILE EXTENSIONS
 # ============================================================
 
 SUPPORTED_EXTENSIONS = {
-    # Python
-    ".py",
-    ".pyw",
-
-    # JavaScript / TypeScript
-    ".js",
-    ".jsx",
-    ".ts",
-    ".tsx",
-
-    # Java
+    ".py", ".pyw", ".ipynb",
+    ".js", ".jsx", ".ts", ".tsx",
     ".java",
-
-    # C / C++
-    ".c",
-    ".cpp",
-    ".h",
-    ".hpp",
-
-    # C#
-    ".cs",
-
-    # Go
-    ".go",
-
-    # Rust
-    ".rs",
-
-    # PHP
-    ".php",
-
-    # Web
-    ".html",
-    ".htm",
-    ".css",
-    ".scss",
-    ".sass",
-
-    # Data / configuration
-    ".json",
-    ".yaml",
-    ".yml",
-    ".toml",
-    ".ini",
-    ".cfg",
-    ".conf",
-
-    # Documentation
-    ".md",
-    ".rst",
-    ".txt",
-
-    # Database
-    ".sql",
-
-    # XML
-    ".xml",
-
-    # Shell
-    ".sh",
-    ".bash",
-    ".bat",
-    ".ps1",
+    ".c", ".cpp", ".h", ".hpp",
+    ".cs", ".go", ".rs", ".php",
+    ".html", ".htm", ".css", ".scss", ".sass",
+    ".json", ".yaml", ".yml", ".toml", ".ini",
+    ".cfg", ".conf",
+    ".md", ".rst", ".txt",
+    ".sql", ".xml",
+    ".sh", ".bash", ".bat", ".ps1",
 }
 
 
-# Files that should not be indexed even if their extension is
-# technically supported.
 IGNORED_FILES = {
     ".ds_store",
     "thumbs.db",
+    ".npmrc",
+    ".pypirc",
+    "credentials",
+    "credentials.json",
+    "secrets.json",
+    "id_rsa",
+    "id_ed25519",
+}
+
+SAFE_ENV_EXAMPLE_FILES = {
+    ".env.example",
+    ".env.sample",
+    ".env.template",
+}
+
+SENSITIVE_FILE_SUFFIXES = {
+    ".pem",
+    ".key",
+    ".p12",
+    ".pfx",
 }
 
 
 # ============================================================
-# LIMITS
+# FILE SIZE LIMITS
 # ============================================================
 
-# We intentionally do NOT impose the old 500 MB ZIP upload limit.
-#
-# The ZIP is streamed directly to disk, so the application does
-# not need to load the entire archive into RAM.
-#
-# These limits protect the application from pathological ZIPs
-# and extremely large individual files.
-#
-# Increase them later if necessary.
-
-MAX_EXTRACTED_REPOSITORY_SIZE = 10 * 1024 * 1024 * 1024
-# 10 GB maximum extracted repository size.
-
-MAX_SINGLE_FILE_SIZE = 500 * 1024 * 1024
-# 500 MB maximum for one individual file.
+MAX_UPLOAD_SIZE = 524_288_000
+MAX_EXTRACTED_REPOSITORY_SIZE = 500 * 1024 * 1024
+MAX_SINGLE_FILE_SIZE = 25 * 1024 * 1024
+MAX_ARCHIVE_MEMBERS = 20_000
 
 
 # ============================================================
@@ -160,11 +92,28 @@ MAX_SINGLE_FILE_SIZE = 500 * 1024 * 1024
 # ============================================================
 
 def create_repository_id() -> str:
-    """
-    Create a short unique repository ID.
-    """
-
+    """Create a unique repository ID."""
     return uuid.uuid4().hex[:12]
+
+
+def resolve_repository_path(repository_id: str) -> Path:
+    """Resolve a repository ID without permitting path traversal."""
+    if (
+        not isinstance(repository_id, str)
+        or not repository_id
+        or repository_id in {".", ".."}
+        or "/" in repository_id
+        or "\\" in repository_id
+    ):
+        raise ValueError("Invalid repository ID.")
+
+    repository_root = BASE_REPOSITORY_DIR.resolve()
+    repository_path = (repository_root / repository_id).resolve()
+
+    if repository_path.parent != repository_root:
+        raise ValueError("Invalid repository ID.")
+
+    return repository_path
 
 
 # ============================================================
@@ -172,14 +121,9 @@ def create_repository_id() -> str:
 # ============================================================
 
 def validate_zip_file(zip_path: str) -> None:
-    """
-    Validate that the uploaded file is a valid ZIP archive.
-    """
-
+    """Validate that the uploaded file is a ZIP archive."""
     if not zipfile.is_zipfile(zip_path):
-        raise ValueError(
-            "Uploaded file is not a valid ZIP archive."
-        )
+        raise ValueError("Uploaded file is not a valid ZIP archive.")
 
 
 # ============================================================
@@ -190,48 +134,24 @@ def is_safe_zip_path(
     extraction_root: Path,
     member_name: str,
 ) -> bool:
-    """
-    Prevent ZIP-slip/path-traversal attacks.
-
-    A malicious ZIP could contain something like:
-
-        ../../some_file
-
-    which could otherwise write files outside the repository
-    directory.
-
-    This function ensures every extracted file remains inside
-    the intended repository directory.
-    """
+    """Prevent ZIP path traversal attacks."""
 
     if not member_name:
         return False
 
-    # Convert ZIP separators to the local platform separator.
     normalized_name = member_name.replace("\\", "/")
 
-    # Reject absolute paths.
     if normalized_name.startswith("/"):
         return False
 
-    # Reject Windows drive paths such as C:/...
-    if len(normalized_name) >= 2:
-        if normalized_name[1] == ":":
-            return False
+    if len(normalized_name) >= 2 and normalized_name[1] == ":":
+        return False
 
-    # Resolve the final extraction path.
-    target_path = (
-        extraction_root / normalized_name
-    ).resolve()
-
-    extraction_root_resolved = (
-        extraction_root.resolve()
-    )
+    target_path = (extraction_root / normalized_name).resolve()
+    root_resolved = extraction_root.resolve()
 
     try:
-        target_path.relative_to(
-            extraction_root_resolved
-        )
+        target_path.relative_to(root_resolved)
     except ValueError:
         return False
 
@@ -246,181 +166,103 @@ def extract_repository(
     zip_path: str,
     repository_id: str,
 ) -> Path:
-    """
-    Safely extract a repository ZIP archive.
+    """Safely extract repository files."""
 
-    Features:
-    - ZIP-slip protection
-    - extracted-size protection
-    - individual-file-size protection
-    - skips ignored directories
-    - streams files from ZIP to disk
-    """
+    BASE_REPOSITORY_DIR.mkdir(parents=True, exist_ok=True)
 
-    BASE_REPOSITORY_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    repository_path = resolve_repository_path(repository_id)
 
-    repository_path = (
-        BASE_REPOSITORY_DIR / repository_id
-    )
-
-    # Remove an existing repository with the same ID.
     if repository_path.exists():
-        shutil.rmtree(repository_path)
+        raise ValueError("Repository ID already exists.")
 
-    repository_path.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    repository_path.mkdir(parents=True, exist_ok=True)
 
     total_extracted_size = 0
 
     try:
-
-        with zipfile.ZipFile(
-            zip_path,
-            "r",
-        ) as zip_ref:
-
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
             members = zip_ref.infolist()
+            if len(members) > MAX_ARCHIVE_MEMBERS:
+                raise ValueError(
+                    "Repository archive contains too many entries."
+                )
 
             for member in members:
-
                 member_name = member.filename
 
-                # ------------------------------------------------
-                # SAFE PATH CHECK
-                # ------------------------------------------------
-
-                if not is_safe_zip_path(
-                    repository_path,
-                    member_name,
-                ):
+                if not is_safe_zip_path(repository_path, member_name):
                     raise ValueError(
-                        "ZIP archive contains an unsafe file path: "
-                        f"{member_name}"
+                        f"ZIP archive contains an unsafe path: {member_name}"
                     )
-
-                # ------------------------------------------------
-                # NORMALIZE PATH
-                # ------------------------------------------------
 
                 normalized_parts = Path(
                     member_name.replace("\\", "/")
                 ).parts
-
-                # ------------------------------------------------
-                # SKIP IGNORED DIRECTORIES
-                # ------------------------------------------------
+                normalized_path = Path(
+                    member_name.replace("\\", "/")
+                )
 
                 if any(
-                    part in IGNORED_DIRECTORIES
+                    part.lower() in IGNORED_DIRECTORIES
                     for part in normalized_parts
                 ):
                     continue
 
-                # ------------------------------------------------
-                # DIRECTORY
-                # ------------------------------------------------
+                filename = normalized_path.name.lower()
+                if (
+                    filename in IGNORED_FILES
+                    or (
+                        filename.startswith(".env")
+                        and filename not in SAFE_ENV_EXAMPLE_FILES
+                    )
+                    or normalized_path.suffix.lower() in SENSITIVE_FILE_SUFFIXES
+                ):
+                    continue
 
                 if member.is_dir():
-                    directory_path = (
-                        repository_path
-                        / member_name
-                    )
-
-                    directory_path.mkdir(
+                    (repository_path / member_name).mkdir(
                         parents=True,
                         exist_ok=True,
                     )
-
                     continue
-
-                # ------------------------------------------------
-                # FILE SIZE PROTECTION
-                # ------------------------------------------------
 
                 file_size = member.file_size
 
                 if file_size > MAX_SINGLE_FILE_SIZE:
-                    print(
-                        "Skipping oversized file: "
-                        f"{member_name} "
-                        f"({file_size / (1024 * 1024):.2f} MB)"
-                    )
+                    print(f"Skipping oversized file: {member_name}")
                     continue
 
-                # ------------------------------------------------
-                # TOTAL SIZE PROTECTION
-                # ------------------------------------------------
+                target_path = repository_path / member_name
+                target_path.parent.mkdir(parents=True, exist_ok=True)
 
-                total_extracted_size += file_size
-
-                if (
-                    total_extracted_size
-                    > MAX_EXTRACTED_REPOSITORY_SIZE
-                ):
-                    raise ValueError(
-                        "Extracted repository is too large. "
-                        "Maximum supported extracted size is "
-                        "10 GB."
-                    )
-
-                # ------------------------------------------------
-                # CREATE TARGET PATH
-                # ------------------------------------------------
-
-                target_path = (
-                    repository_path
-                    / member_name
-                )
-
-                target_path.parent.mkdir(
-                    parents=True,
-                    exist_ok=True,
-                )
-
-                # ------------------------------------------------
-                # STREAM FILE FROM ZIP TO DISK
-                # ------------------------------------------------
-
-                with zip_ref.open(
-                    member,
-                    "r",
-                ) as source:
-
-                    with open(
-                        target_path,
-                        "wb",
-                    ) as destination:
-
+                extracted_file_size = 0
+                with zip_ref.open(member, "r") as source:
+                    with open(target_path, "wb") as destination:
                         while True:
-
-                            chunk = source.read(
-                                1024 * 1024
-                            )
-
+                            chunk = source.read(1024 * 1024)
                             if not chunk:
                                 break
 
-                            destination.write(
-                                chunk
-                            )
+                            extracted_file_size += len(chunk)
+                            total_extracted_size += len(chunk)
+
+                            if extracted_file_size > MAX_SINGLE_FILE_SIZE:
+                                raise ValueError(
+                                    "A repository file exceeds the 500 MB limit."
+                                )
+
+                            if total_extracted_size > MAX_EXTRACTED_REPOSITORY_SIZE:
+                                raise ValueError(
+                                    "Extracted repository exceeds the 10 GB limit."
+                                )
+
+                            destination.write(chunk)
 
         return repository_path
 
     except Exception:
-
-        # Clean up partially extracted repository
-        # if extraction fails.
         if repository_path.exists():
-            shutil.rmtree(
-                repository_path,
-                ignore_errors=True,
-            )
-
+            shutil.rmtree(repository_path, ignore_errors=True)
         raise
 
 
@@ -428,92 +270,101 @@ def extract_repository(
 # PATH FILTERING
 # ============================================================
 
-def is_ignored_path(
-    path: Path,
-) -> bool:
+def is_ignored_path(path: Path) -> bool:
+    """Check whether a path contains an ignored directory."""
+    return any(part in IGNORED_DIRECTORIES for part in path.parts)
+
+
+# ============================================================
+# CONTENT DETECTION
+# ============================================================
+
+def is_probably_text_file(file_path: Path) -> bool:
     """
-    Return True if any directory in the path is ignored.
+    Detect likely text files without relying only on extensions.
+
+    This is a lightweight heuristic. It does not guarantee that
+    every discovered format can be parsed or indexed correctly.
     """
 
-    return any(
-        part in IGNORED_DIRECTORIES
-        for part in path.parts
+    try:
+        with file_path.open("rb") as file:
+            sample = file.read(8192)
+    except OSError:
+        return False
+
+    # Empty files can be discovered.
+    if not sample:
+        return True
+
+    # NUL bytes commonly indicate binary or UTF-16 content.
+    if b"\x00" in sample:
+        return False
+
+    allowed_controls = {7, 8, 9, 10, 12, 13, 27}
+
+    control_count = sum(
+        1
+        for byte in sample
+        if byte < 32 and byte not in allowed_controls
     )
+
+    return control_count / len(sample) <= 0.05
 
 
 # ============================================================
 # FILE SUPPORT CHECK
 # ============================================================
 
-def is_supported_file(
-    file_path: Path,
-) -> bool:
+def is_supported_file(file_path: Path) -> bool:
     """
-    Determine whether a file should be processed by CodeLens.
+    Allow known extensions and unfamiliar files that appear
+    to contain readable text.
     """
 
-    # Ignore known unwanted filenames.
-    if file_path.name.lower() in IGNORED_FILES:
-        return False
-
-    # Ignore files inside ignored directories.
-    if is_ignored_path(file_path):
-        return False
-
-    # Only process supported text/code extensions.
+    filename = file_path.name.lower()
     if (
-        file_path.suffix.lower()
-        not in SUPPORTED_EXTENSIONS
+        filename in IGNORED_FILES
+        or (
+            filename.startswith(".env")
+            and filename not in SAFE_ENV_EXAMPLE_FILES
+        )
+        or file_path.suffix.lower() in SENSITIVE_FILE_SUFFIXES
     ):
         return False
 
-    # Ignore extremely large individual files.
+    if is_ignored_path(file_path):
+        return False
+
     try:
-        if (
-            file_path.stat().st_size
-            > MAX_SINGLE_FILE_SIZE
-        ):
+        if file_path.stat().st_size > MAX_SINGLE_FILE_SIZE:
             return False
     except OSError:
         return False
 
-    return True
+    # An unknown extension is not automatically rejected.
+    return is_probably_text_file(file_path)
 
 
 # ============================================================
 # GET SUPPORTED FILES
 # ============================================================
 
-def get_supported_files(
-    repository_path: Path,
-) -> list[Path]:
-    """
-    Return all supported source/documentation files.
-
-    Files are discovered recursively without loading their
-    contents into memory.
-    """
+def get_supported_files(repository_path: Path) -> list[Path]:
+    """Discover eligible files recursively."""
 
     supported_files = []
 
     for file_path in repository_path.rglob("*"):
-
         if not file_path.is_file():
             continue
 
-        if not is_supported_file(
-            file_path
-        ):
+        if not is_supported_file(file_path):
             continue
 
-        supported_files.append(
-            file_path
-        )
+        supported_files.append(file_path)
 
-    # Sort for deterministic results.
-    supported_files.sort(
-        key=lambda path: str(path).lower()
-    )
+    supported_files.sort(key=lambda path: str(path).lower())
 
     return supported_files
 
@@ -522,43 +373,23 @@ def get_supported_files(
 # REPOSITORY INFORMATION
 # ============================================================
 
-def get_repository_info(
-    repository_path: Path,
-) -> dict:
-    """
-    Return metadata about the repository.
-    """
+def get_repository_info(repository_path: Path) -> dict:
+    """Return repository metadata."""
 
-    files = get_supported_files(
-        repository_path
-    )
-
+    files = get_supported_files(repository_path)
     extensions = {}
 
     for file_path in files:
-
-        extension = (
-            file_path.suffix.lower()
-        )
-
-        if extension not in extensions:
-            extensions[extension] = 0
-
-        extensions[extension] += 1
+        extension = file_path.suffix.lower()
+        extensions[extension] = extensions.get(extension, 0) + 1
 
     return {
         "repository_id": repository_path.name,
-        "repository_path": str(
-            repository_path
-        ),
+        "repository_path": str(repository_path),
         "file_count": len(files),
         "file_types": extensions,
         "files": [
-            str(
-                file_path.relative_to(
-                    repository_path
-                )
-            )
+            str(file_path.relative_to(repository_path))
             for file_path in files
         ],
     }
@@ -571,183 +402,75 @@ def get_repository_info(
 async def stream_upload_to_disk(
     upload_file,
     destination_path: Path,
+    max_bytes: int = MAX_UPLOAD_SIZE,
 ) -> None:
-    """
-    Stream the uploaded ZIP file directly to disk.
+    """Stream the uploaded ZIP to disk in chunks."""
 
-    This avoids:
+    total_bytes = 0
 
-        await upload_file.read()
-
-    which would load the entire ZIP into memory.
-
-    The file is copied in 1 MB chunks.
-    """
-
-    with open(
-        destination_path,
-        "wb",
-    ) as output_file:
-
+    with open(destination_path, "wb") as output_file:
         while True:
-
-            chunk = await upload_file.read(
-                1024 * 1024
-            )
+            chunk = await upload_file.read(1024 * 1024)
 
             if not chunk:
                 break
 
-            output_file.write(
-                chunk
-            )
+            total_bytes += len(chunk)
+            if total_bytes > max_bytes:
+                raise ValueError(
+                    "Uploaded archive exceeds the maximum upload size."
+                )
+
+            output_file.write(chunk)
 
 
 # ============================================================
 # SAVE UPLOADED REPOSITORY
 # ============================================================
 
-async def save_uploaded_repository(
-    upload_file,
-) -> dict:
-    """
-    Save and process an uploaded repository ZIP.
-
-    Pipeline:
-
-        Upload
-          ↓
-        Stream ZIP to disk
-          ↓
-        Validate ZIP
-          ↓
-        Safe extraction
-          ↓
-        File filtering
-          ↓
-        Repository metadata
-    """
+async def save_uploaded_repository(upload_file) -> dict:
+    """Save, extract, and inspect an uploaded repository ZIP."""
 
     if not upload_file.filename:
-        raise ValueError(
-            "Uploaded file has no filename."
-        )
+        raise ValueError("Uploaded file has no filename.")
 
-    filename = (
-        upload_file.filename
-        .lower()
-    )
+    filename = upload_file.filename.lower()
 
     if not filename.endswith(".zip"):
-        raise ValueError(
-            "Only ZIP files are supported."
-        )
+        raise ValueError("Only ZIP files are supported.")
 
-    # --------------------------------------------------------
-    # CREATE REQUIRED DIRECTORIES
-    # --------------------------------------------------------
-
-    UPLOAD_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    BASE_REPOSITORY_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    # --------------------------------------------------------
-    # CREATE REPOSITORY ID
-    # --------------------------------------------------------
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    BASE_REPOSITORY_DIR.mkdir(parents=True, exist_ok=True)
 
     repository_id = create_repository_id()
-
-    zip_path = (
-        UPLOAD_DIR
-        / f"{repository_id}.zip"
-    )
+    zip_path = UPLOAD_DIR / f"{repository_id}.zip"
 
     try:
-
-        # ----------------------------------------------------
-        # STREAM UPLOAD TO DISK
-        # ----------------------------------------------------
-
-        print(
-            f"Saving uploaded repository: "
-            f"{upload_file.filename}"
-        )
+        print(f"Saving uploaded repository: {upload_file.filename}")
 
         await stream_upload_to_disk(
             upload_file=upload_file,
             destination_path=zip_path,
         )
 
-        print(
-            "Repository ZIP saved successfully."
-        )
-
-        # ----------------------------------------------------
-        # VALIDATE ZIP
-        # ----------------------------------------------------
-
-        validate_zip_file(
-            str(zip_path)
-        )
-
-        print(
-            "ZIP validation successful."
-        )
-
-        # ----------------------------------------------------
-        # EXTRACT REPOSITORY
-        # ----------------------------------------------------
+        validate_zip_file(str(zip_path))
 
         repository_path = extract_repository(
             zip_path=str(zip_path),
             repository_id=repository_id,
         )
 
-        print(
-            f"Repository extracted to: "
-            f"{repository_path}"
-        )
+        repository_info = get_repository_info(repository_path)
 
-        # ----------------------------------------------------
-        # GET REPOSITORY INFORMATION
-        # ----------------------------------------------------
-
-        repository_info = get_repository_info(
-            repository_path
-        )
-
-        print(
-            "Repository information collected:"
-        )
-
-        print(
-            f"Files: "
-            f"{repository_info['file_count']}"
-        )
-
-        print(
-            f"File types: "
-            f"{repository_info['file_types']}"
-        )
+        print("Repository information collected.")
+        print(f"Files: {repository_info['file_count']}")
+        print(f"File types: {repository_info['file_types']}")
 
         return repository_info
 
     finally:
-
-        # ----------------------------------------------------
-        # REMOVE TEMPORARY ZIP
-        # ----------------------------------------------------
-
         if zip_path.exists():
-
             try:
                 zip_path.unlink()
-
             except OSError:
                 pass

@@ -13,6 +13,11 @@
         content="CodeLens AI — Understand your codebase with natural-language questions."
     >
 
+    <meta
+        name="codelens-api-base"
+        content="http://127.0.0.1:8000"
+    >
+
     <title>CodeLens AI — Understand Your Codebase</title>
 
     <!-- Google Fonts -->
@@ -57,34 +62,37 @@
             aria-label="Repository navigation"
         >
 
-            <div class="sidebar-top">
+            <div
+                class="sidebar-top"
+                tabindex="0"
+                aria-label="Repository, history, and files"
+            >
 
-                <!-- Brand -->
-                <a
-                    href="#"
-                    class="brand"
-                    aria-label="CodeLens AI home"
-                >
-                    <span class="brand-mark">
-                        <i data-lucide="scan-search"></i>
-                    </span>
+                <div class="sidebar-fixed-header">
+                    <a
+                        href="#"
+                        class="brand"
+                        aria-label="CodeLens AI home"
+                    >
+                        <span class="brand-mark">
+                            <i data-lucide="scan-search"></i>
+                        </span>
 
-                    <span class="brand-name">
-                        CodeLens
-                        <span>AI</span>
-                    </span>
-                </a>
+                        <span class="brand-name">
+                            CodeLens
+                            <span>AI</span>
+                        </span>
+                    </a>
 
-
-                <!-- New project -->
-                <button
-                    class="new-project-btn"
-                    id="newProjectButton"
-                    type="button"
-                >
-                    <i data-lucide="plus"></i>
-                    <span>New repository</span>
-                </button>
+                    <button
+                        class="new-project-btn"
+                        id="newProjectButton"
+                        type="button"
+                    >
+                        <i data-lucide="plus"></i>
+                        <span>New repository</span>
+                    </button>
+                </div>
 
 
                 <!-- Repository section -->
@@ -113,8 +121,8 @@
                         </span>
 
                         <span class="repository-info">
-                            <strong id="currentRepositoryName">Library System</strong>
-                            <small id="currentRepositoryFileCount">7 files · Python</small>
+                            <strong id="currentRepositoryName">No repository selected</strong>
+                            <small id="currentRepositoryFileCount">Upload a ZIP to begin</small>
                         </span>
 
                         <i
@@ -147,48 +155,6 @@
                         id="historyList"
                         aria-label="Repository and conversation history"
                     >
-                        <button
-                            class="history-item"
-                            type="button"
-                            data-history-type="repository"
-                            data-repository-id="58a04eeae0ed"
-                        >
-                            <span class="history-icon repository-history-icon">
-                                <i data-lucide="box"></i>
-                            </span>
-
-                            <span class="history-info">
-                                <strong>RAG Demo</strong>
-                                <small>Repository</small>
-                            </span>
-
-                            <i
-                                class="history-arrow"
-                                data-lucide="chevron-right"
-                            ></i>
-                        </button>
-
-                        <button
-                            class="history-item"
-                            type="button"
-                            data-history-type="conversation"
-                            data-repository-id="58a04eeae0ed"
-                            data-conversation-id="demo-rag-pipeline"
-                        >
-                            <span class="history-icon conversation-history-icon">
-                                <i data-lucide="message-square"></i>
-                            </span>
-
-                            <span class="history-info">
-                                <strong>How does the RAG pipeline work?</strong>
-                                <small>RAG Demo · Conversation</small>
-                            </span>
-
-                            <i
-                                class="history-arrow"
-                                data-lucide="chevron-right"
-                            ></i>
-                        </button>
                     </div>
 
                     <p class="history-empty" id="historyEmpty" hidden>
@@ -203,7 +169,7 @@
                     <div class="section-heading">
                         <span>Files</span>
 
-                        <span class="file-count" id="fileCount">7</span>
+                        <span class="file-count" id="fileCount">0</span>
                     </div>
 
 
@@ -213,78 +179,7 @@
                         aria-label="Repository files"
                     >
 
-                        <!-- backend -->
-                        <button
-                            class="tree-folder"
-                            type="button"
-                            data-folder="backend"
-                        >
-                            <i data-lucide="chevron-down"></i>
-                            <i data-lucide="folder"></i>
-                            <span>backend</span>
-                        </button>
-
-                        <div
-                            class="tree-children"
-                            id="backend"
-                        >
-
-                            <button class="tree-file" type="button">
-                                <i data-lucide="file-code-2"></i>
-                                <span>app.py</span>
-                            </button>
-
-                            <button class="tree-file" type="button">
-                                <i data-lucide="file-code-2"></i>
-                                <span>auth.py</span>
-                            </button>
-
-                            <button class="tree-file" type="button">
-                                <i data-lucide="file-code-2"></i>
-                                <span>database.py</span>
-                            </button>
-
-                            <button class="tree-file" type="button">
-                                <i data-lucide="file-code-2"></i>
-                                <span>routes.py</span>
-                            </button>
-
-                        </div>
-
-
-                        <!-- frontend -->
-                        <button
-                            class="tree-folder"
-                            type="button"
-                            data-folder="frontend"
-                        >
-                            <i data-lucide="chevron-right"></i>
-                            <i data-lucide="folder"></i>
-                            <span>frontend</span>
-                        </button>
-
-                        <div
-                            class="tree-children collapsed"
-                            id="frontend"
-                        >
-
-                            <button class="tree-file" type="button">
-                                <i data-lucide="file-code-2"></i>
-                                <span>App.jsx</span>
-                            </button>
-
-                            <button class="tree-file" type="button">
-                                <i data-lucide="file-code-2"></i>
-                                <span>Login.jsx</span>
-                            </button>
-
-                        </div>
-
-
-                        <button class="tree-file root-file" type="button">
-                            <i data-lucide="file-text"></i>
-                            <span>README.md</span>
-                        </button>
+                        <p class="history-empty">Upload a repository to browse its files.</p>
 
                     </div>
 
@@ -299,17 +194,19 @@
                 <button
                     class="sidebar-link"
                     type="button"
+                    data-scroll-target="dependencyAnalysis"
                 >
-                    <i data-lucide="book-open"></i>
-                    <span>Documentation</span>
+                    <i data-lucide="git-branch"></i>
+                    <span>Dependencies</span>
                 </button>
 
                 <button
                     class="sidebar-link"
                     type="button"
+                    data-scroll-target="impactAnalysis"
                 >
-                    <i data-lucide="settings"></i>
-                    <span>Settings</span>
+                    <i data-lucide="triangle-alert"></i>
+                    <span>Change impact</span>
                 </button>
 
                 <div class="user-card">
@@ -342,7 +239,7 @@
              MAIN AREA
         ====================================================== -->
 
-        <main class="main-content">
+        <main class="main-content" tabindex="0">
 
             <!-- Top bar -->
             <header class="topbar">
@@ -370,7 +267,7 @@
                         <i data-lucide="chevron-right"></i>
 
                         <span id="breadcrumbRepositoryName">
-                            Library System
+                        No repository selected
                         </span>
 
                     </div>
@@ -380,9 +277,9 @@
 
                 <div class="topbar-actions">
 
-                    <div class="connection-status">
+                    <div class="connection-status" id="backendStatus">
                         <span class="status-dot"></span>
-                        Ready
+                        <span id="connectionStatusText">Checking connection</span>
                     </div>
 
                     <button
@@ -458,18 +355,88 @@
                         </div>
 
                         <div>
-                            <span id="repositoryStatusText">Repository ready</span>
-                            <strong id="heroRepositoryName">Library System</strong>
+                            <span id="repositoryStatusText">Waiting for repository</span>
+                            <strong id="heroRepositoryName">No repository selected</strong>
                         </div>
 
                         <div class="repo-stat">
-                            <strong id="heroRepositoryFileCount">7</strong>
+                            <strong id="heroRepositoryFileCount">0</strong>
                             <span>files</span>
                         </div>
 
                     </div>
 
                 </div>
+
+                <section class="repository-dashboard reveal" id="repositoryDashboard" aria-label="Repository overview">
+                    <div class="dashboard-heading">
+                        <div>
+                            <span class="section-kicker">PROJECT SNAPSHOT</span>
+                            <h2>Repository overview</h2>
+                            <p id="overviewDescription">Upload a repository to see a live summary of its structure and technologies.</p>
+                        </div>
+                        <span class="analysis-state" id="analysisState">Waiting for repository</span>
+                    </div>
+
+                    <div class="overview-grid" id="overviewGrid">
+                        <article class="overview-card">
+                            <span class="overview-label">Files analyzed</span>
+                            <strong id="overviewFileCount">—</strong>
+                            <small id="overviewFileTypes">Repository files</small>
+                        </article>
+                        <article class="overview-card">
+                            <span class="overview-label">Languages</span>
+                            <strong id="overviewLanguageCount">—</strong>
+                            <small id="overviewLanguages">Detected from file types</small>
+                        </article>
+                        <article class="overview-card">
+                            <span class="overview-label">Entry points</span>
+                            <strong id="overviewEntryCount">—</strong>
+                            <small id="overviewEntryPoints">Likely application start files</small>
+                        </article>
+                        <article class="overview-card">
+                            <span class="overview-label">Indexing</span>
+                            <strong id="overviewIndexProgress">Not indexed</strong>
+                            <small id="overviewIndexMessage">Upload a ZIP to begin</small>
+                            <div class="progress-track" role="progressbar" aria-label="Repository indexing progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                                <span id="indexProgressBar"></span>
+                            </div>
+                        </article>
+                    </div>
+
+                    <div class="overview-details">
+                        <section class="overview-detail">
+                            <div class="detail-heading">
+                                <h3>Technology stack</h3>
+                                <span id="technologyCount">—</span>
+                            </div>
+                            <div class="tag-list" id="technologyList">
+                                <p class="panel-empty">Technology details appear after a repository is selected.</p>
+                            </div>
+                        </section>
+                        <section class="overview-detail">
+                            <div class="detail-heading">
+                                <h3>Important files</h3>
+                                <span id="importantFileCount">—</span>
+                            </div>
+                            <div class="important-file-list" id="importantFileList">
+                                <p class="panel-empty">Key files are ranked from the repository contents.</p>
+                            </div>
+                        </section>
+                    </div>
+
+                    <form class="repository-search" id="repositorySearchForm">
+                        <label for="repositorySearchInput">
+                            <i data-lucide="search"></i>
+                            <span class="sr-only">Search repository content</span>
+                        </label>
+                        <input id="repositorySearchInput" type="search" maxlength="500" placeholder="Search code and documentation…" autocomplete="off">
+                        <button type="submit" id="repositorySearchButton">Search repository</button>
+                    </form>
+                    <div class="search-results" id="repositorySearchResults" aria-live="polite">
+                        <p class="panel-empty">Search results will include matching repository files and source excerpts.</p>
+                    </div>
+                </section>
 
 
                 <!-- =================================================
@@ -487,16 +454,16 @@
                         <button
                             class="suggestion-card"
                             type="button"
-                            data-question="How does authentication work in this project?"
+                            data-question="Where are the main application entry points?"
                         >
                             <span class="suggestion-icon purple">
                                 <i data-lucide="shield-check"></i>
                             </span>
 
                             <span>
-                                <strong>Understand authentication</strong>
+                                <strong>Find the entry points</strong>
                                 <small>
-                                    Trace the login flow across files
+                                    Locate files that start the application
                                 </small>
                             </span>
 
@@ -510,16 +477,16 @@
                         <button
                             class="suggestion-card"
                             type="button"
-                            data-question="How does the application connect to the database?"
+                            data-question="How are files and modules connected?"
                         >
                             <span class="suggestion-icon blue">
                                 <i data-lucide="database"></i>
                             </span>
 
                             <span>
-                                <strong>Explore data flow</strong>
+                                <strong>Trace file relationships</strong>
                                 <small>
-                                    See how data moves through the app
+                                    Understand dependencies between files
                                 </small>
                             </span>
 
@@ -533,7 +500,7 @@
                         <button
                             class="suggestion-card"
                             type="button"
-                            data-question="Explain the overall architecture of this repository."
+                            data-question="Summarize the structure of this repository."
                         >
                             <span class="suggestion-icon green">
                                 <i data-lucide="layers-3"></i>
@@ -542,7 +509,7 @@
                             <span>
                                 <strong>Explain the architecture</strong>
                                 <small>
-                                    Get a high-level view of the project
+                                    Get a high-level view of the repository
                                 </small>
                             </span>
 
@@ -569,7 +536,7 @@
                     <div>
                         <span class="section-kicker">CONVERSATION HISTORY</span>
                         <strong id="historyContextTitle">Previous conversation</strong>
-                        <small id="historyContextRepository">RAG Demo</small>
+                        <small id="historyContextRepository">Repository</small>
                     </div>
                     <button
                         class="icon-button small"
@@ -635,23 +602,9 @@
                                     <span>Just now</span>
                                 </div>
 
-                                <div class="message-content">
-
-                                    <p>
-                                        Your repository is ready. I can help
-                                        you understand how the code works,
-                                        explain functions, trace behavior
-                                        across files, and answer questions
-                                        about the project.
-                                    </p>
-
-                                    <p>
-                                        Try asking:
-                                        <strong>
-                                            “How does authentication work?”
-                                        </strong>
-                                    </p>
-
+                                <div class="message-content" id="chatEmptyState">
+                                    <p>Choose a repository to start exploring.</p>
+                                    <p>Ask a question to get an explanation grounded in its files, with source references you can open.</p>
                                 </div>
 
                             </div>
@@ -719,9 +672,44 @@
                 </section>
 
 
-                <!-- =================================================
-                     SOURCE EXAMPLE
-                ================================================== -->
+                <section class="analysis-section reveal" id="dependencyAnalysis">
+                    <div class="sources-header">
+                        <div>
+                            <span class="section-kicker">CODE RELATIONSHIPS</span>
+                            <h2>Dependency map</h2>
+                            <p>Explore imports found in Python files and notebook code cells.</p>
+                        </div>
+                        <button class="secondary-button" id="refreshDependencies" type="button" disabled>
+                            <i data-lucide="refresh-cw"></i>
+                            Refresh map
+                        </button>
+                    </div>
+                    <div class="analysis-card">
+                        <div class="analysis-toolbar">
+                            <span id="dependencySummary">Select a repository to analyze file dependencies.</span>
+                            <label for="dependencyFileSelect">Focus file</label>
+                            <select id="dependencyFileSelect" disabled>
+                                <option value="">All files</option>
+                            </select>
+                        </div>
+                        <div class="dependency-graph" id="dependencyGraph" aria-live="polite">
+                            <p class="panel-empty">The dependency map will appear when analysis is available.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="analysis-section reveal" id="impactAnalysis">
+                    <div class="sources-header">
+                        <div>
+                            <span class="section-kicker">CHANGE PLANNING</span>
+                            <h2>Change impact</h2>
+                            <p>Review files with detected direct or indirect dependents.</p>
+                        </div>
+                    </div>
+                    <div class="impact-list" id="impactList" aria-live="polite">
+                        <p class="panel-empty">Select a repository to review its change-impact summary.</p>
+                    </div>
+                </section>
 
                 <section
                     class="sources-section reveal"
@@ -735,156 +723,18 @@
                                 REPOSITORY CONTEXT
                             </span>
 
-                            <h2>
-                                Explore your code with confidence.
-                            </h2>
+                            <h2>Evidence and source files</h2>
                         </div>
 
                         <span class="source-count" id="sourceCount">
-                            3 relevant files
+                        No evidence yet
                         </span>
 
                     </div>
 
 
                     <div class="source-grid" id="sourceGrid">
-
-                        <article class="source-card">
-
-                            <div class="source-top">
-
-                                <div class="source-file-icon python">
-                                    <i data-lucide="file-code-2"></i>
-                                </div>
-
-                                <div class="source-file">
-                                    <strong>auth.py</strong>
-                                    <span>Authentication</span>
-                                </div>
-
-                                <button
-                                    class="source-open"
-                                    type="button"
-                                    aria-label="Open auth.py"
-                                >
-                                    <i data-lucide="external-link"></i>
-                                </button>
-
-                            </div>
-
-                            <div class="source-lines">
-                                Lines 20–45
-                            </div>
-
-                            <div class="code-preview">
-                                <span class="code-keyword">def</span>
-                                <span class="code-function">
-                                    authenticate_user
-                                </span>
-                                <span>(username, password):</span>
-                                <br>
-                                &nbsp;&nbsp;&nbsp;&nbsp;
-                                <span class="code-keyword">user</span>
-                                =
-                                <span class="code-function">
-                                    find_user
-                                </span>
-                                (username)
-                            </div>
-
-                        </article>
-
-
-                        <article class="source-card">
-
-                            <div class="source-top">
-
-                                <div class="source-file-icon python">
-                                    <i data-lucide="file-code-2"></i>
-                                </div>
-
-                                <div class="source-file">
-                                    <strong>routes.py</strong>
-                                    <span>Application routes</span>
-                                </div>
-
-                                <button
-                                    class="source-open"
-                                    type="button"
-                                    aria-label="Open routes.py"
-                                >
-                                    <i data-lucide="external-link"></i>
-                                </button>
-
-                            </div>
-
-                            <div class="source-lines">
-                                Lines 12–30
-                            </div>
-
-                            <div class="code-preview">
-                                <span class="code-decorator">@app</span>
-                                <span>.</span>
-                                <span class="code-function">
-                                    post
-                                </span>
-                                (<span class="code-string">
-                                    "/login"
-                                </span>)
-                                <br>
-                                <span class="code-keyword">
-                                    def
-                                </span>
-                                login(request):
-                            </div>
-
-                        </article>
-
-
-                        <article class="source-card">
-
-                            <div class="source-top">
-
-                                <div class="source-file-icon database">
-                                    <i data-lucide="database"></i>
-                                </div>
-
-                                <div class="source-file">
-                                    <strong>database.py</strong>
-                                    <span>Data access</span>
-                                </div>
-
-                                <button
-                                    class="source-open"
-                                    type="button"
-                                    aria-label="Open database.py"
-                                >
-                                    <i data-lucide="external-link"></i>
-                                </button>
-
-                            </div>
-
-                            <div class="source-lines">
-                                Lines 8–32
-                            </div>
-
-                            <div class="code-preview">
-                                <span class="code-keyword">
-                                    class
-                                </span>
-                                <span class="code-function">
-                                    Database
-                                </span>:
-                                <br>
-                                &nbsp;&nbsp;&nbsp;&nbsp;
-                                <span class="code-keyword">
-                                    def
-                                </span>
-                                connect(self):
-                            </div>
-
-                        </article>
-
+                        <p class="panel-empty">Source evidence from questions and search appears here.</p>
                     </div>
 
                 </section>
@@ -909,7 +759,7 @@
 
                     <span>
                         <span class="status-dot"></span>
-                        All systems ready
+                        Workspace ready
                     </span>
 
                 </div>
@@ -988,7 +838,7 @@
                 </span>
 
                 <small>
-                    ZIP archives only
+                    ZIP archives only · 100 MB maximum
                 </small>
 
             </label>
@@ -1033,6 +883,22 @@
 
         </div>
 
+    </div>
+
+    <div class="modal-backdrop source-preview-backdrop" id="sourcePreviewModal" aria-hidden="true">
+        <section class="source-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="sourcePreviewTitle">
+            <header class="source-preview-header">
+                <div>
+                    <span class="section-kicker">REPOSITORY FILE</span>
+                    <h2 id="sourcePreviewTitle">Source preview</h2>
+                    <p id="sourcePreviewRange">Select a source reference to inspect its code.</p>
+                </div>
+                <button class="icon-button" id="closeSourcePreview" type="button" aria-label="Close source preview">
+                    <i data-lucide="x"></i>
+                </button>
+            </header>
+            <pre class="source-preview-code"><code id="sourcePreviewCode"></code></pre>
+        </section>
     </div>
 
 

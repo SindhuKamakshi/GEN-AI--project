@@ -13,6 +13,7 @@ class RepositoryOverviewAnalyzer:
     LANGUAGE_MAP = {
         ".py": "Python",
         ".pyw": "Python",
+        ".ipynb": "Jupyter Notebook",
         ".js": "JavaScript",
         ".jsx": "JavaScript/React",
         ".ts": "TypeScript",

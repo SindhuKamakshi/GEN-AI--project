@@ -1,5 +1,8 @@
+import ast
 from pathlib import Path
 import re
+
+from repository.notebook_utils import NotebookParseError, read_notebook_cells
 
 
 class TechnologyStackDetector:
@@ -16,6 +19,7 @@ class TechnologyStackDetector:
     LANGUAGE_MAP = {
         ".py": "Python",
         ".pyw": "Python",
+        ".ipynb": "Jupyter Notebook",
         ".js": "JavaScript",
         ".jsx": "JavaScript/React",
         ".ts": "TypeScript",
@@ -514,6 +518,34 @@ class TechnologyStackDetector:
 
         return imports
 
+    def detect_notebook_imports(self, file_path: Path) -> set[str]:
+        imports = set()
+
+        try:
+            cells = read_notebook_cells(file_path)
+        except NotebookParseError:
+            return imports
+
+        for cell in cells:
+            if cell["cell_type"] != "code":
+                continue
+
+            try:
+                tree = ast.parse(cell["source"])
+            except (SyntaxError, ValueError, TypeError):
+                continue
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    imports.update(
+                        alias.name.split(".")[0].lower()
+                        for alias in node.names
+                    )
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    imports.add(node.module.split(".")[0].lower())
+
+        return imports
+
     # ------------------------------------------------------------
     # Extract JavaScript imports
     # ------------------------------------------------------------
@@ -739,6 +771,10 @@ class TechnologyStackDetector:
                         dependency,
                         result,
                     )
+
+            elif extension == ".ipynb":
+                for dependency in self.detect_notebook_imports(file_path):
+                    self.classify_python_dependency(dependency, result)
 
             # ----------------------------------------------------
             # JavaScript / TypeScript

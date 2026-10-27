@@ -337,6 +337,8 @@ class SearchService:
         self,
         metadata: dict,
         intent: str,
+        query: str,
+        content: str,
     ) -> bool:
 
         extension = self.get_file_extension(metadata)
@@ -347,6 +349,11 @@ class SearchService:
                 file_name in self.HIGH_VALUE_FILES
                 or extension in self.CONFIG_EXTENSIONS
                 or extension in self.DOCUMENT_EXTENSIONS
+                or self.is_relevant_notebook_data_result(
+                    metadata,
+                    query,
+                    content,
+                )
             )
 
         if intent == "overview":
@@ -363,9 +370,76 @@ class SearchService:
             )
 
         if intent == "implementation":
-            return extension in self.SOURCE_EXTENSIONS
+            return (
+                extension in self.SOURCE_EXTENSIONS
+                or (
+                    extension == ".ipynb"
+                    and self.is_relevant_notebook_data_result(
+                        metadata,
+                        query,
+                        content,
+                    )
+                )
+            )
 
         return True
+
+    @staticmethod
+    def is_notebook_import_query(query: str) -> bool:
+        query_terms = set(
+            re.findall(r"[a-z_]+", query.lower())
+        )
+        return (
+            "notebook" in query_terms
+            and bool(
+                query_terms.intersection(
+                    {"import", "imports", "imported", "importing"}
+                )
+            )
+        )
+
+    @staticmethod
+    def is_relevant_notebook_data_result(
+        metadata: dict,
+        query: str,
+        content: str,
+    ) -> bool:
+        if (
+            metadata.get("chunk_type") != "notebook_cell"
+            or metadata.get("notebook_cell_type") != "code"
+        ):
+            return False
+
+        query_terms = set(
+            re.findall(r"[a-z_]+", query.lower())
+        )
+
+        asks_about_notebook_data_loading = (
+            "notebook" in query_terms
+            and query_terms.intersection(
+                {"dataset", "data", "file"}
+            )
+            and query_terms.intersection(
+                {"read", "reads", "reading", "load", "loads", "loading"}
+            )
+        )
+
+        has_python_import = re.search(
+            r"(?m)^\s*(?:import\s+\w+|from\s+\w+\s+import\b)",
+            content,
+        )
+        has_data_reader = re.search(
+            r"\b(?:[A-Za-z_]\w*\.)?(?:read|load)_[A-Za-z_]\w*\s*\(",
+            content,
+        )
+
+        if asks_about_notebook_data_loading:
+            return bool(has_python_import and has_data_reader)
+
+        if SearchService.is_notebook_import_query(query):
+            return bool(has_python_import)
+
+        return False
 
     # ==========================================================
     # File Boost
@@ -1608,6 +1682,8 @@ class SearchService:
             if not self.should_keep_result(
                 metadata,
                 intent,
+                query,
+                candidate["content"],
             ):
                 continue
 
@@ -1983,6 +2059,7 @@ class SearchService:
             final_results.append(
                 {
                     "rank": rank,
+                    "chunk_id": result.get("chunk_id"),
                     "content": result[
                         "content"
                     ],

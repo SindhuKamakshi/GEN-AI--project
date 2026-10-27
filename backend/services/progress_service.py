@@ -1,5 +1,5 @@
 from datetime import datetime
-from threading import Lock
+from threading import RLock
 from typing import Dict, Any
 
 
@@ -12,7 +12,28 @@ class ProgressService:
 
     def __init__(self):
         self._progress: Dict[str, Dict[str, Any]] = {}
-        self._lock = Lock()
+        self._lock = RLock()
+
+    def begin(self, repository_id: str) -> bool:
+        """Atomically start indexing unless it is already in progress."""
+        with self._lock:
+            current = self._progress.get(repository_id)
+            if current and current["status"] == "indexing":
+                return False
+
+            self._progress[repository_id] = {
+                "repository_id": repository_id,
+                "status": "indexing",
+                "stage": "initialized",
+                "progress": 0,
+                "processed_files": 0,
+                "total_files": 0,
+                "processed_chunks": 0,
+                "total_chunks": 0,
+                "message": "Repository processing initialized.",
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+            return True
 
     def initialize(self, repository_id: str) -> None:
         """

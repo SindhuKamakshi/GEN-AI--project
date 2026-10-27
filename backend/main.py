@@ -1,12 +1,17 @@
-from fastapi import FastAPI, File, HTTPException, UploadFile
+import logging
+from pathlib import Path
+
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from config import REPOSITORIES_DIR
-
+from config import ALLOWED_ORIGINS
 from repository.manager import (
+    MAX_UPLOAD_SIZE,
     save_uploaded_repository,
     get_supported_files,
+    is_supported_file,
+    resolve_repository_path,
 )
 
 from repository.chunker import chunk_repository
@@ -15,7 +20,11 @@ from rag.embedding_service import EmbeddingService
 from rag.vector_store import VectorStore
 from rag.keyword_store import KeywordStore
 from rag.search_service import SearchService
-from rag.llm_service import LLMService
+from rag.llm_service import (
+    LLMConfigurationError,
+    LLMProviderError,
+    LLMService,
+)
 from rag.rag_service import RAGService
 from rag.reranker import Reranker
 
@@ -25,13 +34,15 @@ from analysis.importance_analyzer import ImportantFileAnalyzer
 from analysis.structure_analyzer import RepositoryStructureAnalyzer
 from analysis.api_analyzer import APIAnalyzer
 from analysis.architecture_analyzer import ArchitectureAnalyzer
-from analysis.dependency_analyzer import DependencyAnalyzer
-from analysis.dependency_service import DependencyService
 from analysis.dependency_service import DependencyService
 from analysis.impact_analyzer import ImpactAnalyzer
 from analysis.onboarding_analyzer import OnboardingAnalyzer
 
 from services.progress_service import progress_service
+
+logger = logging.getLogger(__name__)
+MAX_SOURCE_PREVIEW_LINES = 300
+MAX_SOURCE_PREVIEW_START_LINE = 1_000_000
 
 
 # ============================================================
@@ -51,10 +62,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:5500",
-        "http://localhost:5500",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -92,6 +100,16 @@ rag_service = RAGService(
 )
 
 print("CodeLens AI services initialized successfully.")
+
+
+def _repository_path(repository_id: str):
+    try:
+        return resolve_repository_path(repository_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid repository ID.",
+        ) from exc
 
 
 # ============================================================
@@ -134,6 +152,7 @@ def health():
 
 @app.post("/api/repositories/upload")
 async def upload_repository(
+    request: Request,
     file: UploadFile = File(...)
 ):
     """
@@ -160,6 +179,14 @@ async def upload_repository(
             detail="Only ZIP repository files are supported.",
         )
 
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit():
+        if int(content_length) > MAX_UPLOAD_SIZE + 1024 * 1024:
+            raise HTTPException(
+                status_code=413,
+                detail="Uploaded archive exceeds the maximum upload size.",
+            )
+
     try:
         repository = await save_uploaded_repository(file)
 
@@ -172,19 +199,15 @@ async def upload_repository(
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=str(exc),
-        )
+            detail="Repository overview could not be generated.",
+        ) from exc
 
     except Exception as exc:
-        print(f"Repository upload failed: {exc}")
-
+        logger.exception("Repository upload failed")
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Failed to upload and extract the repository: "
-                f"{str(exc)}"
-            ),
-        )
+            detail="Failed to upload and extract the repository.",
+        ) from exc
 
 
 # ============================================================
@@ -202,7 +225,7 @@ def get_repository_overview(
     deterministic repository-level information.
     """
 
-    repository_path = REPOSITORIES_DIR / repository_id
+    repository_path = _repository_path(repository_id)
 
     if not repository_path.exists():
         raise HTTPException(
@@ -235,15 +258,12 @@ def get_repository_overview(
         )
 
     except Exception as exc:
-        print(f"Repository overview failed: {exc}")
+        logger.exception("Repository overview failed")
 
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Failed to analyze repository: "
-                f"{str(exc)}"
-            ),
-        )
+            detail="Failed to analyze repository.",
+        ) from exc
 
 
 # ============================================================
@@ -266,7 +286,7 @@ def get_technology_stack(
     - project configuration
     """
 
-    repository_path = REPOSITORIES_DIR / repository_id
+    repository_path = _repository_path(repository_id)
 
     if not repository_path.exists():
         raise HTTPException(
@@ -295,21 +315,16 @@ def get_technology_stack(
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=str(exc),
-        )
+            detail="Technology stack could not be detected.",
+        ) from exc
 
     except Exception as exc:
-        print(
-            f"Technology stack detection failed: {exc}"
-        )
+        logger.exception("Technology stack detection failed")
 
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Failed to detect technology stack: "
-                f"{str(exc)}"
-            ),
-        )
+            detail="Failed to detect technology stack.",
+        ) from exc
 
 
 # ============================================================
@@ -328,7 +343,7 @@ def get_important_files(
     understanding the repository.
     """
 
-    repository_path = REPOSITORIES_DIR / repository_id
+    repository_path = _repository_path(repository_id)
 
     if not repository_path.exists():
         raise HTTPException(
@@ -368,21 +383,16 @@ def get_important_files(
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=str(exc),
-        )
+            detail="Important files could not be analyzed.",
+        ) from exc
 
     except Exception as exc:
-        print(
-            f"Important file analysis failed: {exc}"
-        )
+        logger.exception("Important file analysis failed")
 
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Failed to analyze important files: "
-                f"{str(exc)}"
-            ),
-        )
+            detail="Failed to analyze important files.",
+        ) from exc
 
 
 # ============================================================
@@ -399,7 +409,7 @@ def get_repository_structure(
     Analyze the structural organization of a repository.
     """
 
-    repository_path = REPOSITORIES_DIR / repository_id
+    repository_path = _repository_path(repository_id)
 
     if not repository_path.exists():
         raise HTTPException(
@@ -428,21 +438,16 @@ def get_repository_structure(
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=str(exc),
-        )
+            detail="Repository structure could not be analyzed.",
+        ) from exc
 
     except Exception as exc:
-        print(
-            f"Repository structure analysis failed: {exc}"
-        )
+        logger.exception("Repository structure analysis failed")
 
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Failed to analyze repository structure: "
-                f"{str(exc)}"
-            ),
-        )
+            detail="Failed to analyze repository structure.",
+        ) from exc
 
 
 # ============================================================
@@ -459,7 +464,7 @@ def get_repository_apis(
     Discover API endpoints exposed by a repository.
     """
 
-    repository_path = REPOSITORIES_DIR / repository_id
+    repository_path = _repository_path(repository_id)
 
     if not repository_path.exists():
         raise HTTPException(
@@ -488,21 +493,16 @@ def get_repository_apis(
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=str(exc),
-        )
+            detail="Repository APIs could not be discovered.",
+        ) from exc
 
     except Exception as exc:
-        print(
-            f"API discovery failed: {exc}"
-        )
+        logger.exception("API discovery failed")
 
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Failed to discover APIs: "
-                f"{str(exc)}"
-            ),
-        )
+            detail="Failed to discover repository APIs.",
+        ) from exc
 
 
 # ============================================================
@@ -520,6 +520,8 @@ def get_repository_architecture(
     """
 
     try:
+        _repository_path(repository_id)
+
         analyzer = ArchitectureAnalyzer(repository_id)
 
         result = analyzer.analyze()
@@ -532,20 +534,21 @@ def get_repository_architecture(
     except FileNotFoundError as exc:
         raise HTTPException(
             status_code=404,
-            detail=str(exc),
-        )
+            detail="Repository not found.",
+        ) from exc
 
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=str(exc),
-        )
+            detail="Repository architecture could not be analyzed.",
+        ) from exc
 
     except Exception as exc:
+        logger.exception("Architecture analysis failed")
         raise HTTPException(
             status_code=500,
-            detail=f"Architecture analysis failed: {str(exc)}",
-        )
+            detail="Architecture analysis failed.",
+        ) from exc
 
 
 # ============================================================
@@ -558,9 +561,7 @@ def get_repository_architecture(
 def analyze_dependencies(
     repository_id: str
 ):
-    repository_path = (
-        REPOSITORIES_DIR / repository_id
-    )
+    repository_path = _repository_path(repository_id)
 
     if not repository_path.exists():
         raise HTTPException(
@@ -575,6 +576,9 @@ def analyze_dependencies(
         )
 
     try:
+        _repository_path(repository_id)
+        _repository_path(repository_id)
+
         result = dependency_service.analyze_repository(
             repository_id=repository_id,
             repository_path=repository_path,
@@ -588,20 +592,21 @@ def analyze_dependencies(
     except FileNotFoundError as exc:
         raise HTTPException(
             status_code=404,
-            detail=str(exc),
-        )
+            detail="Repository not found.",
+        ) from exc
 
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=str(exc),
-        )
+            detail="Repository dependencies could not be analyzed.",
+        ) from exc
 
     except Exception as exc:
+        logger.exception("Dependency analysis failed")
         raise HTTPException(
             status_code=500,
-            detail=str(exc),
-        )
+            detail="Dependency analysis failed.",
+        ) from exc
 # ============================================================
 # FILE IMPACT
 # ============================================================
@@ -613,6 +618,7 @@ def analyze_file_impact(
     repository_id: str,
     file_path: str,
 ):
+    _repository_path(repository_id)
     analyzer = ImpactAnalyzer(repository_id)
 
     try:
@@ -626,20 +632,21 @@ def analyze_file_impact(
     except FileNotFoundError as exc:
         raise HTTPException(
             status_code=404,
-            detail=str(exc),
-        )
+            detail="Requested file was not found in the repository.",
+        ) from exc
 
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=str(exc),
-        )
+            detail="Invalid file path for impact analysis.",
+        ) from exc
 
     except Exception as exc:
+        logger.exception("File impact analysis failed")
         raise HTTPException(
             status_code=500,
-            detail=str(exc),
-        )
+            detail="File impact analysis failed.",
+        ) from exc
 
 
 # ============================================================
@@ -652,6 +659,7 @@ def analyze_file_impact(
 def analyze_repository_impact(
     repository_id: str,
 ):
+    _repository_path(repository_id)
     analyzer = ImpactAnalyzer(repository_id)
 
     try:
@@ -663,14 +671,15 @@ def analyze_repository_impact(
     except FileNotFoundError as exc:
         raise HTTPException(
             status_code=404,
-            detail=str(exc),
-        )
+            detail="Repository not found.",
+        ) from exc
 
     except Exception as exc:
+        logger.exception("Repository impact analysis failed")
         raise HTTPException(
             status_code=500,
-            detail=str(exc),
-        )
+            detail="Repository impact analysis failed.",
+        ) from exc
 
 
 # ============================================================
@@ -683,6 +692,7 @@ def analyze_repository_impact(
 def analyze_onboarding(
     repository_id: str,
 ):
+    _repository_path(repository_id)
     analyzer = OnboardingAnalyzer(repository_id)
 
     try:
@@ -694,20 +704,21 @@ def analyze_onboarding(
     except FileNotFoundError as exc:
         raise HTTPException(
             status_code=404,
-            detail=str(exc),
-        )
+            detail="Repository not found.",
+        ) from exc
 
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=str(exc),
-        )
+            detail="Repository onboarding analysis could not be generated.",
+        ) from exc
 
     except Exception as exc:
+        logger.exception("Onboarding analysis failed")
         raise HTTPException(
             status_code=500,
-            detail=str(exc),
-        )
+            detail="Onboarding analysis failed.",
+        ) from exc
 
 
 # ============================================================
@@ -744,13 +755,13 @@ def index_repository(
     Progress is tracked using progress_service.
     """
 
-    # --------------------------------------------------------
-    # INITIALIZE PROGRESS
-    # --------------------------------------------------------
+    if not progress_service.begin(repository_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Repository indexing is already in progress.",
+        )
 
-    progress_service.initialize(
-        repository_id
-    )
+    indexes_replaced = False
 
     try:
 
@@ -758,9 +769,7 @@ def index_repository(
         # REPOSITORY PATH
         # ====================================================
 
-        repository_path = (
-            REPOSITORIES_DIR / repository_id
-        )
+        repository_path = _repository_path(repository_id)
 
         # ----------------------------------------------------
         # VALIDATE REPOSITORY
@@ -947,6 +956,22 @@ def index_repository(
             )
         )
 
+        progress_service.update(
+            repository_id,
+            stage="dependency_analysis",
+            progress=85,
+            processed_files=total_files,
+            total_files=total_files,
+            processed_chunks=total_chunks,
+            total_chunks=total_chunks,
+            message="Analyzing repository dependencies...",
+        )
+        dependency_service.clear_repository(repository_id)
+        dependency_analysis = dependency_service.analyze_repository(
+            repository_id=repository_id,
+            repository_path=repository_path,
+        )
+
         # ----------------------------------------------------
         # Remove previous ChromaDB index.
         #
@@ -954,6 +979,7 @@ def index_repository(
         # repository is indexed again.
         # ----------------------------------------------------
 
+        indexes_replaced = True
         vector_store.delete_repository(
             repository_id
         )
@@ -985,36 +1011,17 @@ def index_repository(
                 "ChromaDB chunk count does not match "
                 "repository chunk count."
             )
-        # ====================================================
-        # STEP 5: DEPENDENCY ANALYSIS
-        # ====================================================
 
         progress_service.update(
-    repository_id,
-    stage="dependency_analysis",
-    progress=90,
-    processed_files=total_files,
-    total_files=total_files,
-    processed_chunks=total_chunks,
-    total_chunks=total_chunks,
-    message="Analyzing repository dependencies..."
-)
-
-        dependency_analysis = dependency_service.analyze_repository(
-    repository_id=repository_id,
-    repository_path=repository_path,
-)
-
-        progress_service.update(
-    repository_id,
-    stage="dependency_analysis",
-    progress=95,
-    processed_files=total_files,
-    total_files=total_files,
-    processed_chunks=total_chunks,
-    total_chunks=total_chunks,
-    message="Dependency analysis completed."
-)
+            repository_id,
+            stage="dependency_analysis",
+            progress=90,
+            processed_files=total_files,
+            total_files=total_files,
+            processed_chunks=total_chunks,
+            total_chunks=total_chunks,
+            message="Dependency analysis completed.",
+        )
         # ----------------------------------------------------
         # Store the same chunks in SQLite FTS5.
         #
@@ -1103,21 +1110,25 @@ def index_repository(
     # ========================================================
 
     except Exception as exc:
-
+        if indexes_replaced:
+            try:
+                vector_store.delete_repository(repository_id)
+                keyword_store.delete_repository(repository_id)
+            except Exception:
+                logger.exception(
+                    "Failed to clean up incomplete repository indexes"
+                )
         progress_service.fail(
             repository_id,
-            str(exc)
+            "Indexing failed. Check backend logs for details.",
         )
 
-        print(
-            "Repository indexing failed:",
-            str(exc)
-        )
+        logger.exception("Repository indexing failed")
 
         raise HTTPException(
             status_code=500,
-            detail=str(exc)
-        )
+            detail="Repository indexing failed.",
+        ) from exc
 
 
 # ============================================================
@@ -1131,6 +1142,13 @@ def get_repository_progress(repository_id: str):
     """
     Return the current indexing progress of a repository.
     """
+
+    repository_path = _repository_path(repository_id)
+    if not repository_path.is_dir():
+        raise HTTPException(
+            status_code=404,
+            detail="Repository not found.",
+        )
 
     progress = progress_service.get(
         repository_id
@@ -1152,6 +1170,98 @@ def get_repository_progress(repository_id: str):
 # SEMANTIC SEARCH
 # ============================================================
 
+@app.get(
+    "/api/repositories/{repository_id}/files/{file_path:path}"
+)
+def get_repository_file(
+    repository_id: str,
+    file_path: str,
+    start_line: int = 1,
+    line_count: int = 200,
+):
+    """Return a bounded source preview from the selected repository."""
+    repository_path = _repository_path(repository_id)
+    if not repository_path.is_dir():
+        raise HTTPException(
+            status_code=404,
+            detail="Repository not found.",
+        )
+
+    if (
+        start_line < 1
+        or start_line > MAX_SOURCE_PREVIEW_START_LINE
+        or line_count < 1
+        or line_count > MAX_SOURCE_PREVIEW_LINES
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid source preview range.",
+        )
+
+    relative_path = Path(file_path)
+    if relative_path.is_absolute() or ".." in relative_path.parts:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid repository file path.",
+        )
+
+    source_path = (repository_path / relative_path).resolve()
+    try:
+        source_path.relative_to(repository_path.resolve())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid repository file path.",
+        ) from exc
+
+    if not source_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="Repository file not found.",
+        )
+
+    if not is_supported_file(source_path):
+        raise HTTPException(
+            status_code=415,
+            detail="This file is not available for source preview.",
+        )
+
+    end_line = start_line + line_count - 1
+    lines = []
+    try:
+        with source_path.open(
+            "r",
+            encoding="utf-8",
+            errors="replace",
+        ) as source:
+            for line_number, line in enumerate(source, start=1):
+                if line_number < start_line:
+                    continue
+                if line_number > end_line:
+                    break
+                lines.append(line.rstrip("\r\n"))
+    except OSError as exc:
+        logger.exception("Source preview failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Could not read the repository file.",
+        ) from exc
+
+    if not lines:
+        raise HTTPException(
+            status_code=416,
+            detail="Source line is outside the file.",
+        )
+
+    return {
+        "repository_id": repository_id,
+        "file_path": relative_path.as_posix(),
+        "start_line": start_line,
+        "end_line": start_line + len(lines) - 1,
+        "content": "\n".join(lines),
+    }
+
+
 @app.post(
     "/api/repositories/{repository_id}/search"
 )
@@ -1160,12 +1270,7 @@ def semantic_search(
     request: SearchRequest,
 ):
     """
-    Perform semantic search over the selected repository.
-
-    NOTE:
-    This endpoint still uses the existing semantic search
-    service. Hybrid RRF search will be introduced in the
-    next phase.
+    Search the selected repository using hybrid retrieval.
     """
 
     if not request.query.strip():
@@ -1183,6 +1288,12 @@ def semantic_search(
         )
 
     try:
+        repository_path = _repository_path(repository_id)
+        if not repository_path.is_dir():
+            raise HTTPException(
+                status_code=404,
+                detail="Repository not found.",
+            )
 
         results = search_service.search(
             repository_id=repository_id,
@@ -1196,19 +1307,15 @@ def semantic_search(
             "results": results,
         }
 
+    except HTTPException:
+        raise
     except Exception as exc:
-
-        print(
-            f"Semantic search failed: {exc}"
-        )
+        logger.exception("Semantic search failed")
 
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Semantic search failed: "
-                f"{str(exc)}"
-            ),
-        )
+            detail="Semantic search failed.",
+        ) from exc
 
 
 # ============================================================
@@ -1227,18 +1334,15 @@ def ask_repository(
 
     Question
         ↓
-    Semantic retrieval
+    Hybrid semantic and keyword retrieval
+        ↓
+    Reranking
         ↓
     Relevant code chunks
         ↓
     Gemini
         ↓
     Grounded answer
-
-    NOTE:
-    The RAG pipeline still uses the existing semantic
-    SearchService. Hybrid retrieval will be connected
-    in the next phase.
     """
 
     if not request.question.strip():
@@ -1256,36 +1360,42 @@ def ask_repository(
         )
 
     try:
+        repository_path = _repository_path(repository_id)
 
-        repository_path = (
-    REPOSITORIES_DIR / repository_id
-)
-
-        if not repository_path.exists():
+        if not repository_path.is_dir():
             raise HTTPException(
-        status_code=404,
-        detail="Repository not found.",
-    )
+                status_code=404,
+                detail="Repository not found.",
+            )
 
         result = rag_service.answer_question(
-    repository_id=repository_id,
-    question=request.question,
-    top_k=request.top_k,
-    repository_path=repository_path,
-)
+            repository_id=repository_id,
+            question=request.question,
+            top_k=request.top_k,
+            repository_path=repository_path,
+        )
 
         return result
 
+    except HTTPException:
+        raise
+    except LLMConfigurationError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Answer generation is unavailable. Please try again later.",
+        ) from exc
+    except LLMProviderError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+        ) from exc
     except Exception as exc:
-
-        print(
-            f"RAG request failed: {exc}"
-        )
+        logger.exception("RAG request failed")
 
         raise HTTPException(
             status_code=500,
-            detail=str(exc),
-        )
+            detail="Failed to answer the question.",
+        ) from exc
 
 
 # ============================================================

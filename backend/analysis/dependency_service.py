@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 from threading import Lock
 
@@ -15,7 +16,29 @@ class DependencyService:
 
     def __init__(self):
         self._cache = {}
+        self._fingerprints = {}
         self._lock = Lock()
+
+    @staticmethod
+    def _repository_fingerprint(repository_path: Path) -> str:
+        digest = hashlib.sha256()
+
+        for path in sorted(repository_path.rglob("*")):
+            if not path.is_file() or path.suffix.lower() not in {".py", ".ipynb"}:
+                continue
+
+            relative_parts = path.relative_to(repository_path).parts
+            if any(
+                part.lower() in DependencyAnalyzer.DEV_DIRS
+                for part in relative_parts
+            ):
+                continue
+
+            stat = path.stat()
+            digest.update(path.relative_to(repository_path).as_posix().encode("utf-8"))
+            digest.update(f"\0{stat.st_size}\0{stat.st_mtime_ns}\n".encode("ascii"))
+
+        return digest.hexdigest()
 
     # =========================================================
     # Repository analysis
@@ -49,18 +72,25 @@ class DependencyService:
                 f"Repository does not exist: {repository_path}"
             )
 
+        fingerprint = self._repository_fingerprint(repository_path)
+
         with self._lock:
 
-            if repository_id in self._cache:
+            if (
+                repository_id in self._cache
+                and self._fingerprints.get(repository_id) == fingerprint
+            ):
                 return self._cache[repository_id]
 
             analyzer = DependencyAnalyzer(
-                repository_id=repository_id
+                repository_id=repository_id,
+                repository_path=repository_path,
             )
 
             result = analyzer.analyze()
 
             self._cache[repository_id] = result
+            self._fingerprints[repository_id] = fingerprint
 
             return result
 
@@ -81,6 +111,7 @@ class DependencyService:
                 repository_id,
                 None,
             )
+            self._fingerprints.pop(repository_id, None)
 
     def clear_all(self) -> None:
         """
@@ -89,6 +120,7 @@ class DependencyService:
 
         with self._lock:
             self._cache.clear()
+            self._fingerprints.clear()
 
     # =========================================================
     # Entity lookup

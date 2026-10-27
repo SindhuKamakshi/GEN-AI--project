@@ -85,6 +85,7 @@ class ImportantFileAnalyzer:
     SOURCE_EXTENSIONS = {
         ".py",
         ".pyw",
+        ".ipynb",
         ".js",
         ".jsx",
         ".ts",

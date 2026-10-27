@@ -3,6 +3,7 @@ from pathlib import Path
 from collections import Counter, defaultdict, deque
 
 from config import REPOSITORIES_DIR
+from repository.notebook_utils import NotebookParseError, read_notebook_cells
 
 
 class DependencyAnalyzer:
@@ -92,13 +93,19 @@ class DependencyAnalyzer:
         "sqlite3",
     }
 
-    def __init__(self, repository_id: str):
+    def __init__(
+        self,
+        repository_id: str,
+        repository_path: str | Path | None = None,
+    ):
         if not repository_id:
             raise ValueError("repository_id is required")
 
         self.repository_id = repository_id
-        self.repository_path = (
-            REPOSITORIES_DIR / repository_id
+        self.repository_path = Path(
+            repository_path
+            if repository_path is not None
+            else REPOSITORIES_DIR / repository_id
         )
 
     # =========================================================
@@ -122,14 +129,16 @@ class DependencyAnalyzer:
     # =========================================================
 
     def _iter_python_files(self):
-        for path in self.repository_path.rglob("*.py"):
+        for path in self.repository_path.rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in {".py", ".ipynb"}:
+                continue
 
             relative_parts = path.relative_to(
                 self.repository_path
             ).parts
 
             if any(
-                part in self.DEV_DIRS
+                part.lower() in self.DEV_DIRS
                 for part in relative_parts
             ):
                 continue
@@ -295,6 +304,13 @@ class DependencyAnalyzer:
                         "qualified_name": qualified_name,
                     }
                 )
+                cell_number = getattr(
+                    node,
+                    "_codelens_cell_number",
+                    None,
+                )
+                if cell_number is not None:
+                    entities[-1]["cell_number"] = cell_number
 
                 # Continue into nested entities.
                 for child in ast.iter_child_nodes(node):
@@ -333,19 +349,59 @@ class DependencyAnalyzer:
             )
 
             try:
+                if path.suffix.lower() == ".ipynb":
+                    cells = read_notebook_cells(path)
+                    module_trees = []
+                    cell_errors = []
 
-                source = path.read_text(
-                    encoding="utf-8",
-                    errors="ignore",
-                )
+                    for cell in cells:
+                        if cell["cell_type"] != "code" or not cell["source"].strip():
+                            continue
 
-                tree = ast.parse(source)
+                        try:
+                            cell_tree = ast.parse(cell["source"])
+                        except (SyntaxError, ValueError, TypeError):
+                            cell_errors.append(cell["cell_number"])
+                            continue
 
-                imports = self._extract_imports(tree)
+                        for node in ast.walk(cell_tree):
+                            node._codelens_cell_number = cell["cell_number"]
+                        module_trees.append(cell_tree)
 
-                entities = self._extract_entities(
-                    tree,
-                    relative_path,
+                    tree = ast.Module(
+                        body=[
+                            node
+                            for cell_tree in module_trees
+                            for node in cell_tree.body
+                        ],
+                        type_ignores=[],
+                    )
+                    imports = sorted({
+                        import_name
+                        for cell_tree in module_trees
+                        for import_name in self._extract_imports(cell_tree)
+                    })
+                    if cell_errors:
+                        failed_files.append({
+                            "path": relative_path,
+                            "error": "Some notebook code cells could not be parsed.",
+                            "cell_numbers": cell_errors,
+                        })
+                    if not module_trees and cell_errors:
+                        tree = None
+                        imports = []
+                else:
+                    source = path.read_text(
+                        encoding="utf-8",
+                        errors="ignore",
+                    )
+                    tree = ast.parse(source)
+                    imports = self._extract_imports(tree)
+
+                entities = (
+                    self._extract_entities(tree, relative_path)
+                    if tree is not None
+                    else []
                 )
 
                 files.append(
@@ -357,6 +413,19 @@ class DependencyAnalyzer:
                         "tree": tree,
                     }
                 )
+
+            except NotebookParseError:
+                failed_files.append({
+                    "path": relative_path,
+                    "error": "Notebook is not valid readable JSON or has no cells list.",
+                })
+                files.append({
+                    "path": relative_path,
+                    "module": module,
+                    "imports": [],
+                    "entities": [],
+                    "tree": None,
+                })
 
             except (
                 SyntaxError,
@@ -1358,32 +1427,21 @@ class DependencyAnalyzer:
                     ),
                 )
 
-                summaries.append(
-                    {
-                        "file": entity["file"],
-                        "entity": entity["name"],
-                        "type": entity["type"],
-                        "qualified_name": entity[
-                            "qualified_name"
-                        ],
-                        "start_line": entity[
-                            "start_line"
-                        ],
-                        "end_line": entity[
-                            "end_line"
-                        ],
-                        "dependencies": (
-                            direct_dependencies
-                        ),
-                        "depended_on_by": dependents,
-                        "dependency_count": len(
-                            direct_dependencies
-                        ),
-                        "dependent_count": len(
-                            dependents
-                        ),
-                    }
-                )
+                summary = {
+                    "file": entity["file"],
+                    "entity": entity["name"],
+                    "type": entity["type"],
+                    "qualified_name": entity["qualified_name"],
+                    "start_line": entity["start_line"],
+                    "end_line": entity["end_line"],
+                    "dependencies": direct_dependencies,
+                    "depended_on_by": dependents,
+                    "dependency_count": len(direct_dependencies),
+                    "dependent_count": len(dependents),
+                }
+                if "cell_number" in entity:
+                    summary["cell_number"] = entity["cell_number"]
+                summaries.append(summary)
 
         return summaries
 
@@ -1582,6 +1640,14 @@ class DependencyAnalyzer:
             )
             for file_info in files
         )
+        total_python_files = sum(
+            Path(file_info["path"]).suffix.lower() != ".ipynb"
+            for file_info in files
+        )
+        total_notebooks = sum(
+            Path(file_info["path"]).suffix.lower() == ".ipynb"
+            for file_info in files
+        )
 
         # ---------------------------------------------
         # Final result
@@ -1591,11 +1657,12 @@ class DependencyAnalyzer:
             "repository_id": self.repository_id,
 
             # File-level information
-            "total_python_files": len(files),
+            "total_python_files": total_python_files,
+            "total_notebooks": total_notebooks,
 
-            "analyzed_files": (
-                len(files)
-                - len(failed_files)
+            "analyzed_files": sum(
+                file_info.get("tree") is not None
+                for file_info in files
             ),
 
             "failed_files": failed_files,
