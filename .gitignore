@@ -26,12 +26,15 @@ data/keyword_index.db
 
 # Uploaded repositories / generated repository data
 data/repositories/
+data/uploads/
 
 # Backend generated uploads
 backend/uploads/
 
 # Logs
 *.log
+*.tmp
+*.temp
 
 # Frontend dependencies
 frontend/node_modules/
@@ -52,6 +55,3 @@ Thumbs.db
 *.egg-info/
 dist/
 build/
-
-# Generated keyword search database
-data/keyword_index.db

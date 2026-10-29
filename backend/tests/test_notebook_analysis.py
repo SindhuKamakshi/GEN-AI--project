@@ -6,6 +6,9 @@ from analysis.importance_analyzer import ImportantFileAnalyzer
 from analysis.overview_analyzer import RepositoryOverviewAnalyzer
 from analysis.tech_stack_detector import TechnologyStackDetector
 from repository.chunker import chunk_file
+from rag.keyword_store import KeywordStore
+from rag.rag_service import RAGService
+from rag.search_service import SearchService
 from rag.vector_store import VectorStore
 
 
@@ -79,6 +82,81 @@ def test_notebook_chunk_metadata_is_accepted_by_vector_store(tmp_path):
     assert json.loads(result["metadatas"][0][0]["cell_metadata_json"]) == {
         "tags": ["setup"]
     }
+
+
+def test_dataset_loading_question_retrieves_notebook_code_and_cell_reference(
+    tmp_path,
+):
+    notebook = write_notebook(
+        tmp_path / "analysis.ipynb",
+        [
+            {"cell_type": "markdown", "metadata": {}, "source": "Overview"},
+            code_cell("df = pd.read_csv('ravenstack_subscriptions.csv')"),
+        ],
+    )
+    repository_id = "repository"
+    chunks = chunk_file(notebook, tmp_path, repository_id)
+    keyword_store = KeywordStore(tmp_path / "keyword.sqlite3")
+    keyword_store.add_chunks(repository_id, chunks)
+
+    class FixedEmbedding:
+        @staticmethod
+        def embed_query(_query):
+            return [0.1, 0.2]
+
+    class EmptyVectorStore:
+        @staticmethod
+        def search(**_kwargs):
+            return {
+                "documents": [[]],
+                "metadatas": [[]],
+                "distances": [[]],
+                "ids": [[]],
+            }
+
+    class FakeLLM:
+        @staticmethod
+        def generate_answer(question, context):
+            assert "pd.read_csv('ravenstack_subscriptions.csv')" in context
+            return {
+                "answer": "The notebook loads ravenstack_subscriptions.csv.",
+                "model": "test",
+            }
+
+    class NoDependencyExpansion:
+        @staticmethod
+        def expand_search_results(**kwargs):
+            return kwargs["search_results"]
+
+    search_service = SearchService(
+        FixedEmbedding(),
+        EmptyVectorStore(),
+        keyword_store,
+    )
+    rag_service = RAGService(
+        search_service,
+        FakeLLM(),
+        NoDependencyExpansion(),
+    )
+
+    result = rag_service.answer_question(
+        repository_id=repository_id,
+        question="What dataset is loaded by read_csv ravenstack_subscriptions csv?",
+        repository_path=tmp_path,
+    )
+
+    assert result["retrieved_chunks"][0]["content"].find(
+        "pd.read_csv('ravenstack_subscriptions.csv')"
+    ) >= 0
+    assert result["sources"] == [{
+        "file_path": "analysis.ipynb",
+        "start_line": 2,
+        "end_line": 2,
+        "chunk_type": "notebook_cell",
+        "name": "cell_2_part_1_code",
+        "distance": 0.0,
+        "cell_number": 2,
+    }]
 
 
 def test_notebook_technology_detection_uses_imports_and_file_format(tmp_path):

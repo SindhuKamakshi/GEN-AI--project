@@ -1,7 +1,9 @@
+import os
 import shutil
 import uuid
 import zipfile
 from pathlib import Path
+from pathlib import PurePosixPath
 
 from config import REPOSITORIES_DIR, DATA_DIR
 
@@ -141,10 +143,13 @@ def is_safe_zip_path(
 
     normalized_name = member_name.replace("\\", "/")
 
-    if normalized_name.startswith("/"):
-        return False
-
-    if len(normalized_name) >= 2 and normalized_name[1] == ":":
+    parts = PurePosixPath(normalized_name).parts
+    if (
+        normalized_name.startswith("/")
+        or ":" in normalized_name
+        or not parts
+        or any(part in {".", ".."} for part in parts)
+    ):
         return False
 
     target_path = (extraction_root / normalized_name).resolve()
@@ -178,6 +183,7 @@ def extract_repository(
     repository_path.mkdir(parents=True, exist_ok=True)
 
     total_extracted_size = 0
+    seen_members = set()
 
     try:
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
@@ -195,12 +201,18 @@ def extract_repository(
                         f"ZIP archive contains an unsafe path: {member_name}"
                     )
 
-                normalized_parts = Path(
+                normalized_name = PurePosixPath(
                     member_name.replace("\\", "/")
-                ).parts
-                normalized_path = Path(
-                    member_name.replace("\\", "/")
-                )
+                ).as_posix().rstrip("/")
+                duplicate_key = os.path.normcase(normalized_name)
+                if not normalized_name or duplicate_key in seen_members:
+                    raise ValueError(
+                        "ZIP archive contains duplicate or empty paths."
+                    )
+                seen_members.add(duplicate_key)
+
+                normalized_path = Path(*PurePosixPath(normalized_name).parts)
+                normalized_parts = normalized_path.parts
 
                 if any(
                     part.lower() in IGNORED_DIRECTORIES
@@ -248,12 +260,12 @@ def extract_repository(
 
                             if extracted_file_size > MAX_SINGLE_FILE_SIZE:
                                 raise ValueError(
-                                    "A repository file exceeds the 500 MB limit."
+                                    "A repository file exceeds the 25 MB limit."
                                 )
 
                             if total_extracted_size > MAX_EXTRACTED_REPOSITORY_SIZE:
                                 raise ValueError(
-                                    "Extracted repository exceeds the 10 GB limit."
+                                    "Extracted repository exceeds the 500 MB limit."
                                 )
 
                             destination.write(chunk)

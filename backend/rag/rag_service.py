@@ -256,6 +256,12 @@ class RAGService:
             "name"
         )
 
+        if (
+            metadata.get("chunk_type") == "notebook_cell"
+            and metadata.get("cell_number") is not None
+        ):
+            return f"{file_path} | Notebook cell {metadata['cell_number']}"
+
         if start_line is not None and end_line is not None:
 
             line_info = (
@@ -515,16 +521,17 @@ class RAGService:
                 source_key
             )
 
-            sources.append(
-                {
-                    "file_path": file_path,
-                    "start_line": start_line,
-                    "end_line": end_line,
-                    "chunk_type": chunk_type,
-                    "name": name,
-                    "distance": distance,
-                }
-            )
+            source = {
+                "file_path": file_path,
+                "start_line": start_line,
+                "end_line": end_line,
+                "chunk_type": chunk_type,
+                "name": name,
+                "distance": distance,
+            }
+            if metadata.get("cell_number") is not None:
+                source["cell_number"] = metadata["cell_number"]
+            sources.append(source)
 
         return sources
 

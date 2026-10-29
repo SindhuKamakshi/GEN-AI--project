@@ -340,10 +340,16 @@ def create_notebook_chunks(
             chunk["metadata"].update({
                 "language": "Jupyter Notebook",
                 "chunk_type": "notebook_cell",
+                "name": (
+                    f"cell_{cell_number}_"
+                    f"part_{part_number}_{cell_type}"
+                ),
                 "notebook_cell_type": cell_type,
                 "cell_number": cell_number,
                 "cell_part": part_number,
                 "cell_language": cell_language,
+                "start_line": cell_number,
+                "end_line": cell_number,
                 "cell_metadata_json": json.dumps(
                     cell["metadata"],
                     ensure_ascii=False,

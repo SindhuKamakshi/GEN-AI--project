@@ -4083,3 +4083,79 @@ body {
         padding: 18px 14px;
     }
 }
+
+.repository-insight-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.repository-insight-grid h3 {
+    margin-bottom: 12px;
+    font-size: 13px;
+}
+
+.repository-insight-grid .analysis-card {
+    align-self: start;
+}
+
+.repository-insight-grid .onboarding-card {
+    grid-column: 1 / -1;
+}
+
+.analysis-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.insight-list {
+    display: grid;
+    gap: 7px;
+    list-style: none;
+}
+
+.insight-list > p,
+.insight-item {
+    min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.02);
+    font-size: 11px;
+    overflow-wrap: anywhere;
+}
+
+.insight-item {
+    width: 100%;
+    text-align: left;
+}
+
+.insight-item:hover,
+.insight-item:focus-visible {
+    border-color: var(--border-strong);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.insight-item small {
+    display: block;
+    margin-top: 3px;
+    color: var(--text-muted);
+}
+
+@media (max-width: 720px) {
+    .repository-insight-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .repository-insight-grid .onboarding-card {
+        grid-column: auto;
+    }
+
+    .analysis-actions {
+        align-items: flex-end;
+        flex-direction: column;
+    }
+}

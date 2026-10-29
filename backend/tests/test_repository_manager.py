@@ -67,6 +67,40 @@ def test_zip_extraction_preserves_repository_files(tmp_path, monkeypatch):
     ]
 
 
+def test_zip_extraction_rejects_duplicate_normalized_paths(
+    tmp_path,
+    monkeypatch,
+):
+    repository_root = tmp_path / "repositories"
+    monkeypatch.setattr(manager, "BASE_REPOSITORY_DIR", repository_root)
+    archive_path = tmp_path / "duplicates.zip"
+
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("src/app.py", "first")
+        archive.writestr("src//app.py", "second")
+
+    with pytest.raises(ValueError, match="duplicate or empty paths"):
+        manager.extract_repository(str(archive_path), "repository")
+
+    assert not (repository_root / "repository").exists()
+
+
+@pytest.mark.parametrize(
+    "member_name",
+    (
+        "../outside.txt",
+        "src/../../outside.txt",
+        "C:/outside.txt",
+        "src/file.txt:stream",
+    ),
+)
+def test_zip_path_validation_rejects_traversal_and_windows_paths(
+    tmp_path,
+    member_name,
+):
+    assert not manager.is_safe_zip_path(tmp_path, member_name)
+
+
 def test_zip_extraction_does_not_store_credentials_or_private_keys(
     tmp_path,
     monkeypatch,

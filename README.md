@@ -2,7 +2,10 @@
 
 CodeLens AI is a static HTML/CSS/JavaScript frontend with a FastAPI backend for
 repository indexing, hybrid code search, evidence-backed questions, and
-Python/notebook dependency analysis.
+Python/notebook dependency analysis. The dashboard also provides deterministic
+technology and important-file detection, Python architecture/API discovery,
+change-impact summaries, and an evidence-based onboarding guide. Notebook code
+is indexed without execution and its citations retain one-based cell references.
 
 ## Local development
 

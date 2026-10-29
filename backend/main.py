@@ -197,9 +197,12 @@ async def upload_repository(
         }
 
     except ValueError as exc:
+        detail = str(exc)
+        if "unsafe path" in detail.lower():
+            detail = "ZIP archive contains an unsafe path."
         raise HTTPException(
             status_code=400,
-            detail="Repository overview could not be generated.",
+            detail=detail,
         ) from exc
 
     except Exception as exc:
@@ -755,6 +758,8 @@ def index_repository(
     Progress is tracked using progress_service.
     """
 
+    repository_path = _repository_path(repository_id)
+
     if not progress_service.begin(repository_id):
         raise HTTPException(
             status_code=409,
@@ -768,8 +773,6 @@ def index_repository(
         # ====================================================
         # REPOSITORY PATH
         # ====================================================
-
-        repository_path = _repository_path(repository_id)
 
         # ----------------------------------------------------
         # VALIDATE REPOSITORY

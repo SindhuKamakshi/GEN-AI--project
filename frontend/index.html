@@ -209,6 +209,15 @@
                     <span>Change impact</span>
                 </button>
 
+                <button
+                    class="sidebar-link"
+                    type="button"
+                    data-scroll-target="repositoryArchitecture"
+                >
+                    <i data-lucide="network"></i>
+                    <span>Architecture &amp; APIs</span>
+                </button>
+
                 <div class="user-card">
 
                     <div class="avatar">
@@ -710,6 +719,44 @@
                         <p class="panel-empty">Select a repository to review its change-impact summary.</p>
                     </div>
                 </section>
+
+                <section class="analysis-section reveal" id="repositoryArchitecture">
+                    <div class="sources-header">
+                        <div>
+                            <span class="section-kicker">STATIC REPOSITORY ANALYSIS</span>
+                            <h2>Architecture, APIs and onboarding</h2>
+                            <p>Inspect Python architecture and discovered application routes without executing repository code.</p>
+                        </div>
+                        <div class="analysis-actions">
+                            <span class="analysis-state" id="architectureStatus">Select a repository</span>
+                            <button class="secondary-button" id="refreshRepositoryInsights" type="button" disabled>
+                                <i data-lucide="refresh-cw"></i>
+                                Load analysis
+                            </button>
+                        </div>
+                    </div>
+                    <div class="repository-insight-grid">
+                        <article class="analysis-card">
+                            <h3>Architecture</h3>
+                            <div id="architectureSummary" aria-live="polite">
+                                <p class="panel-empty">Load analysis to inspect Python layers, technologies and entry points.</p>
+                            </div>
+                        </article>
+                        <article class="analysis-card">
+                            <h3>API and application interfaces</h3>
+                            <div id="apiDiscoveryList" aria-live="polite">
+                                <p class="panel-empty">Discovered endpoints and supported UI interfaces will appear here.</p>
+                            </div>
+                        </article>
+                        <article class="analysis-card onboarding-card">
+                            <h3>Developer onboarding</h3>
+                            <div id="onboardingGuide" aria-live="polite">
+                                <p class="panel-empty">A source-based starting guide will appear here.</p>
+                            </div>
+                        </article>
+                    </div>
+                </section>
+
 
                 <section
                     class="sources-section reveal"

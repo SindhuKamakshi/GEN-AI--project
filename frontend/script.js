@@ -184,10 +184,14 @@ function initializeSidebar() {
 
     document.querySelectorAll("[data-scroll-target]").forEach(button => {
         button.addEventListener("click", () => {
-            document.getElementById(button.dataset.scrollTarget)?.scrollIntoView({
+            const targetId = button.dataset.scrollTarget;
+            document.getElementById(targetId)?.scrollIntoView({
                 behavior: "smooth",
                 block: "start"
             });
+            if (targetId === "repositoryArchitecture" && currentRepository) {
+                loadRepositoryInsights(currentRepository);
+            }
         });
     });
 
@@ -1089,6 +1093,14 @@ function updateRepositoryUI(repository) {
         repository.files || []
     );
 
+    currentDependencyAnalysis = null;
+    currentImpactAnalysis = null;
+    setText("architectureStatus", "Not loaded");
+    setPanelMessage("architectureSummary", "Load analysis to inspect Python layers, technologies and entry points.");
+    setPanelMessage("apiDiscoveryList", "Discovered endpoints and supported UI interfaces will appear here.");
+    setPanelMessage("onboardingGuide", "A source-based starting guide will appear here.");
+    const insightsButton = document.getElementById("refreshRepositoryInsights");
+    if (insightsButton) insightsButton.disabled = false;
     updateSourcesSection([], []);
     setPanelMessage("repositorySearchResults", "Search code and documentation to find matching repository files.");
     document.getElementById("impactDetails")?.remove();
@@ -1098,6 +1110,10 @@ function updateRepositoryUI(repository) {
 
 function initializeDashboard() {
     checkBackendStatus();
+
+    document.getElementById("refreshRepositoryInsights")?.addEventListener("click", () => {
+        if (currentRepository) loadRepositoryInsights(currentRepository);
+    });
 
     document.getElementById("repositorySearchForm")?.addEventListener("submit", async event => {
         event.preventDefault();
@@ -1158,6 +1174,163 @@ async function checkBackendStatus() {
 
 let currentDependencyAnalysis = null;
 let currentImpactAnalysis = null;
+let repositoryInsightsLoadVersion = 0;
+
+async function loadRepositoryInsights(repository) {
+    const repositoryId = repository?.repository_id;
+    if (!repositoryId) return;
+
+    const version = ++repositoryInsightsLoadVersion;
+    const button = document.getElementById("refreshRepositoryInsights");
+    if (button) button.disabled = true;
+    setText("architectureStatus", "Loading analysis");
+    setPanelMessage("architectureSummary", "Analyzing Python architecture…");
+    setPanelMessage("apiDiscoveryList", "Discovering API routes and application interfaces…");
+    setPanelMessage("onboardingGuide", "Building a repository learning path…");
+
+    const requests = await Promise.allSettled([
+        apiRequest(`${CODELENS_API_BASE}/api/repositories/${encodeURIComponent(repositoryId)}/architecture`, {}, "Architecture analysis is unavailable."),
+        apiRequest(`${CODELENS_API_BASE}/api/repositories/${encodeURIComponent(repositoryId)}/apis`, {}, "API discovery is unavailable."),
+        apiRequest(`${CODELENS_API_BASE}/api/repositories/${encodeURIComponent(repositoryId)}/onboarding`, {}, "Onboarding guidance is unavailable.")
+    ]);
+
+    if (version !== repositoryInsightsLoadVersion || currentRepository?.repository_id !== repositoryId) return;
+
+    const [architecture, apis, onboarding] = requests;
+    if (architecture.status === "fulfilled") {
+        renderArchitectureInsights(architecture.value.architecture || {});
+    } else {
+        setPanelMessage("architectureSummary", architecture.reason.message);
+    }
+    if (apis.status === "fulfilled") {
+        renderApiInsights(apis.value.api_discovery || {});
+    } else {
+        setPanelMessage("apiDiscoveryList", apis.reason.message);
+    }
+    if (onboarding.status === "fulfilled") {
+        renderOnboardingInsights(onboarding.value.onboarding || {});
+    } else {
+        setPanelMessage("onboardingGuide", onboarding.reason.message);
+    }
+
+    const successfulRequests = requests.filter(request => request.status === "fulfilled").length;
+    setText("architectureStatus", successfulRequests === requests.length
+        ? "Analysis loaded"
+        : successfulRequests
+            ? "Some analysis unavailable"
+            : "Analysis unavailable");
+    const status = document.getElementById("architectureStatus");
+    status?.classList.toggle("is-ready", successfulRequests === requests.length);
+    status?.classList.toggle("is-error", successfulRequests < requests.length);
+    if (button) button.disabled = false;
+}
+
+function renderInsightList(id, items, emptyMessage) {
+    const container = document.getElementById(id);
+    if (!container) return;
+    container.replaceChildren();
+    if (!items.length) {
+        setPanelMessage(id, emptyMessage);
+        return;
+    }
+
+    const list = document.createElement("div");
+    list.className = "insight-list";
+    items.forEach(item => {
+        const label = String(item.label || item.file || "Repository insight");
+        const detail = item.detail ? String(item.detail) : "";
+        const entry = item.file ? document.createElement("button") : document.createElement("p");
+        if (item.file) {
+            entry.type = "button";
+            entry.className = "insight-item";
+            entry.addEventListener("click", () => openSourcePreview(item.file, item.line || 1));
+        }
+        entry.textContent = label;
+        if (detail) {
+            const small = document.createElement("small");
+            small.textContent = detail;
+            entry.appendChild(small);
+        }
+        list.appendChild(entry);
+    });
+    container.appendChild(list);
+}
+
+function renderArchitectureInsights(architecture) {
+    const summary = architecture.architecture_summary || {};
+    if (!Number(architecture.total_python_files || 0)) {
+        setPanelMessage("architectureSummary", "No Python source files were available for static architecture analysis.");
+        return;
+    }
+
+    const layers = Object.entries(summary.layers_detected || {})
+        .map(([name, count]) => `${name} (${count})`)
+        .join(", ");
+    const rows = [
+        `Architecture style: ${summary.architecture_style || "Not classified"}`,
+        `Python files analyzed: ${architecture.analyzed_files || 0}/${architecture.total_python_files}`,
+        `Entry points: ${(summary.entry_points || []).join(", ") || "None detected"}`,
+        `Frameworks: ${(summary.frameworks || []).join(", ") || "None detected"}`,
+        `Layers: ${layers || "No distinct layers detected"}`,
+        `Internal imports: ${summary.internal_dependency_count ?? architecture.internal_dependencies?.length ?? 0}`,
+        `External dependencies: ${summary.external_dependency_count ?? 0}`
+    ];
+    renderInsightList("architectureSummary", rows.map(label => ({ label })), "No architecture information was detected.");
+}
+
+function renderApiInsights(analysis) {
+    const endpoints = (analysis.endpoints || []).map(endpoint => ({
+        file: endpoint.file,
+        line: endpoint.line,
+        label: `${endpoint.method || "API"} ${endpoint.path || "/"} — ${endpoint.function || "endpoint"}`,
+        detail: `${endpoint.framework || "API"} · ${endpoint.file || "Unknown file"}${endpoint.line ? `:${endpoint.line}` : ""}`
+    }));
+    const interfaces = (analysis.application_interfaces || []).map(interfaceInfo => ({
+        file: interfaceInfo.file,
+        line: interfaceInfo.line,
+        label: `${interfaceInfo.framework || "Application"} · ${interfaceInfo.component || interfaceInfo.component_type || "interface"}`,
+        detail: `${interfaceInfo.file || "Unknown file"}${interfaceInfo.line ? `:${interfaceInfo.line}` : ""}`
+    }));
+    renderInsightList(
+        "apiDiscoveryList",
+        [...endpoints, ...interfaces].slice(0, 20),
+        "No supported Python API routes or application interfaces were detected."
+    );
+}
+
+function renderOnboardingInsights(onboarding) {
+    const guide = onboarding.repository_guide || {};
+    const items = [];
+    if (guide.architecture_style) {
+        items.push({ label: `Architecture: ${guide.architecture_style}` });
+    }
+    if (guide.start_with) {
+        items.push({
+            file: guide.start_with,
+            label: `Start with ${guide.start_with}`,
+            detail: "Suggested first file"
+        });
+    }
+    (onboarding.learning_path || []).slice(0, 8).forEach(step => {
+        const file = step.file;
+        items.push({
+            file,
+            line: step.line,
+            label: `${step.step || items.length + 1}. ${file || step.title || "Repository concept"}`,
+            detail: step.reason || step.role || ""
+        });
+    });
+    if (!items.length) {
+        (guide.recommended_first_files || []).slice(0, 8).forEach(file => {
+            items.push({ file, label: file, detail: "Suggested first file" });
+        });
+    }
+    renderInsightList(
+        "onboardingGuide",
+        items,
+        "No onboarding steps could be inferred from this repository."
+    );
+}
 
 async function loadRepositoryDashboard(repository) {
     const version = ++repositoryLoadVersion;
