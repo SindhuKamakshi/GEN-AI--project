@@ -1,4 +1,6 @@
-# CodeLens AI
+# GEN-AI--project (CodeLens AI)
+
+AI-Powered GitHub Repository Assistant.
 
 CodeLens AI is a static HTML/CSS/JavaScript frontend with a FastAPI backend for
 repository indexing, hybrid code search, evidence-backed questions, and
